@@ -4,6 +4,7 @@ import tempfile
 
 import fitz
 import pytest
+from pypdf import PdfReader
 
 from services.pdf_watermark_remover import (
     _extract_text_from_block,
@@ -259,3 +260,109 @@ class TestRemoveWatermarkAnnotations:
         reader = PdfReader(io.BytesIO(result))
         annots = reader.pages[0].get("/Annots")
         assert annots is not None and len(annots) == 1
+
+
+class TestRemoveInlineWatermarks:
+    def test_removes_studocu_watermark_text(self):
+        """StuDocu platform fingerprints in content stream should be removed."""
+        doc = fitz.open()
+        for _ in range(3):
+            page = doc.new_page()
+            page.insert_text((72, 72), "Normal content here.", fontsize=12)
+            page.insert_text(
+                (200, 800),
+                "messages.downloaded_by",
+                fontsize=8,
+                color=(0.3, 0.3, 0.3),
+            )
+            page.insert_text((250, 10), "lOMoARcPSD|12930651", fontsize=1)
+        buf = io.BytesIO()
+        doc.save(buf)
+        doc.close()
+
+        result = remove_watermark(buf.getvalue())
+
+        reader = PdfReader(io.BytesIO(result))
+        for page in reader.pages:
+            text = page.extract_text()
+            assert "messages.downloaded_by" not in text
+            assert "lOMoARcPSD" not in text
+
+    def test_preserves_normal_content(self):
+        """Normal text content must survive watermark removal."""
+        doc = fitz.open()
+        for _ in range(3):
+            page = doc.new_page()
+            page.insert_text((72, 72), "Important content to keep.", fontsize=12)
+            page.insert_text(
+                (200, 800),
+                "messages.downloaded_by",
+                fontsize=8,
+                color=(0.3, 0.3, 0.3),
+            )
+        buf = io.BytesIO()
+        doc.save(buf)
+        doc.close()
+
+        result = remove_watermark(buf.getvalue())
+
+        reader = PdfReader(io.BytesIO(result))
+        for page in reader.pages:
+            text = page.extract_text()
+            assert "Important content to keep" in text
+
+    def test_removes_classic_large_light_watermark(self):
+        """Large light-colored text like CONFIDENTIAL/DRAFT should be removed."""
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "Normal content.", fontsize=12)
+        page.insert_text(
+            (100, 400), "CONFIDENTIAL", fontsize=48, color=(0.8, 0.8, 0.8)
+        )
+        buf = io.BytesIO()
+        doc.save(buf)
+        doc.close()
+
+        result = remove_watermark(buf.getvalue())
+
+        reader = PdfReader(io.BytesIO(result))
+        text = reader.pages[0].extract_text()
+        assert "CONFIDENTIAL" not in text
+        assert "Normal content" in text
+
+    def test_removes_large_light_non_keyword_watermark(self):
+        """Large light custom text (not a classic keyword) should be removed."""
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "Normal content.", fontsize=12)
+        page.insert_text(
+            (100, 400), "Property of ACME Corp", fontsize=48, color=(0.85, 0.85, 0.85)
+        )
+        buf = io.BytesIO()
+        doc.save(buf)
+        doc.close()
+
+        result = remove_watermark(buf.getvalue())
+
+        reader = PdfReader(io.BytesIO(result))
+        text = reader.pages[0].extract_text()
+        assert "Property of ACME Corp" not in text
+        assert "Normal content" in text
+
+    def test_preserves_page_count(self):
+        """Output PDF should have same number of pages as input."""
+        doc = fitz.open()
+        for i in range(5):
+            page = doc.new_page()
+            page.insert_text((72, 72), f"Page {i+1}", fontsize=12)
+            page.insert_text(
+                (200, 800), "messages.downloaded_by", fontsize=8
+            )
+        buf = io.BytesIO()
+        doc.save(buf)
+        doc.close()
+
+        result = remove_watermark(buf.getvalue())
+
+        reader = PdfReader(io.BytesIO(result))
+        assert len(reader.pages) == 5

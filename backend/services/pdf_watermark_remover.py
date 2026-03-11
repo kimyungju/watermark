@@ -266,8 +266,121 @@ def _remove_watermark_streams(writer, cross_page_texts):
 
 
 def _remove_inline_watermarks(writer, cross_page_texts):
-    """Method 3: Remove inline watermark operators from content streams."""
-    pass
+    """Method 3: Remove inline watermark operators from content streams.
+
+    Parses each page's content stream into BT...ET text blocks.
+    For each block, extracts text and checks against watermark heuristics
+    (known patterns, cross-page repetition, light color, small font).
+    Removes entire BT...ET blocks identified as watermarks.
+    Non-text operators (images, paths, graphics) are never touched.
+    """
+    for page in writer.pages:
+        try:
+            content = page.get_contents()
+        except Exception:
+            continue
+        if content is None:
+            continue
+
+        try:
+            ops = content.operations
+        except Exception:
+            continue
+
+        new_ops = []
+        # Track graphics state for color/font detection
+        current_color = None
+        current_font_size = None
+        state_stack = []
+
+        i = 0
+        while i < len(ops):
+            operands, operator = ops[i]
+
+            # Track graphics state stack (q saves, Q restores)
+            if operator == b"q":
+                state_stack.append((current_color, current_font_size))
+                new_ops.append((operands, operator))
+                i += 1
+                continue
+            elif operator == b"Q":
+                if state_stack:
+                    current_color, current_font_size = state_stack.pop()
+                new_ops.append((operands, operator))
+                i += 1
+                continue
+
+            # Track fill color outside text blocks
+            if operator == b"rg" and len(operands) == 3:
+                try:
+                    current_color = tuple(float(o) for o in operands)
+                except (TypeError, ValueError):
+                    pass
+            elif operator == b"g" and len(operands) == 1:
+                try:
+                    gray = float(operands[0])
+                    current_color = (gray, gray, gray)
+                except (TypeError, ValueError):
+                    pass
+
+            # Track font size outside text blocks
+            if operator == b"Tf" and len(operands) >= 2:
+                try:
+                    current_font_size = float(operands[1])
+                except (TypeError, ValueError):
+                    pass
+
+            # Collect entire BT...ET text block
+            if operator == b"BT":
+                block = [(operands, operator)]
+                block_color = current_color
+                block_font_size = current_font_size
+                i += 1
+
+                while i < len(ops) and ops[i][1] != b"ET":
+                    inner_operands, inner_op = ops[i]
+                    block.append((inner_operands, inner_op))
+
+                    # Track state changes within block
+                    if inner_op == b"rg" and len(inner_operands) == 3:
+                        try:
+                            block_color = tuple(float(o) for o in inner_operands)
+                        except (TypeError, ValueError):
+                            pass
+                    elif inner_op == b"g" and len(inner_operands) == 1:
+                        try:
+                            gray = float(inner_operands[0])
+                            block_color = (gray, gray, gray)
+                        except (TypeError, ValueError):
+                            pass
+                    elif inner_op == b"Tf" and len(inner_operands) >= 2:
+                        try:
+                            block_font_size = float(inner_operands[1])
+                        except (TypeError, ValueError):
+                            pass
+
+                    i += 1
+
+                # Include the ET operator
+                if i < len(ops):
+                    block.append(ops[i])
+                    i += 1
+
+                # Extract text and decide whether to remove
+                text = _extract_text_from_block(block)
+                if _should_remove_block(
+                    text, block_color, block_font_size, cross_page_texts
+                ):
+                    continue  # Skip entire BT...ET block
+                else:
+                    new_ops.extend(block)
+                    continue
+
+            new_ops.append((operands, operator))
+            i += 1
+
+        content.operations = new_ops
+        page.replace_contents(content)
 
 
 def _remove_watermark_xobjects(writer, cross_page_texts):
