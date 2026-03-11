@@ -262,6 +262,48 @@ class TestRemoveWatermarkAnnotations:
         annots = reader.pages[0].get("/Annots")
         assert annots is not None and len(annots) == 1
 
+    def test_removes_uri_platform_annotation(self):
+        """Annotations linking to known platform URIs should be removed."""
+        from pypdf import PdfReader, PdfWriter
+        from pypdf.generic import (
+            ArrayObject,
+            DictionaryObject,
+            NameObject,
+            NumberObject,
+            TextStringObject,
+        )
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=595, height=842)
+        page = writer.pages[0]
+
+        annot = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Annot"),
+                NameObject("/Subtype"): NameObject("/Link"),
+                NameObject("/Rect"): ArrayObject(
+                    [NumberObject(72), NumberObject(700), NumberObject(200), NumberObject(720)]
+                ),
+                NameObject("/A"): DictionaryObject(
+                    {
+                        NameObject("/S"): NameObject("/URI"),
+                        NameObject("/URI"): TextStringObject("https://www.studocu.com/doc/123"),
+                    }
+                ),
+            }
+        )
+        annot_ref = writer._add_object(annot)
+        page[NameObject("/Annots")] = ArrayObject([annot_ref])
+
+        buf = io.BytesIO()
+        writer.write(buf)
+
+        result = remove_watermark(buf.getvalue())
+
+        reader = PdfReader(io.BytesIO(result))
+        annots = reader.pages[0].get("/Annots")
+        assert annots is None or len(annots) == 0
+
 
 class TestRemoveInlineWatermarks:
     def test_removes_studocu_watermark_text(self):

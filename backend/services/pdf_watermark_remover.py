@@ -12,8 +12,6 @@ from collections import Counter
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import (
     ArrayObject,
-    ContentStream,
-    DictionaryObject,
     NameObject,
     NumberObject,
     TextStringObject,
@@ -140,7 +138,7 @@ def _should_remove_block(text, color, font_size, cross_page_texts):
 
 def _collect_cross_page_texts(writer):
     """Find text that appears on every page of the document."""
-    if len(writer.pages) <= 1:
+    if len(writer.pages) < 2:
         return set()
 
     page_texts = []
@@ -521,14 +519,9 @@ def _remove_watermark_xobjects(writer, cross_page_texts):
                         if marker in data_lower:
                             is_watermark = True
                             break
-                except Exception:
-                    pass
 
-                # Cross-page Form XObjects with watermark markers
-                if not is_watermark and name in cross_page_xobjects:
-                    try:
-                        data = xobj.get_data()
-                        data_lower = data.lower()
+                    # Cross-page Form XObjects with watermark markers
+                    if not is_watermark and name in cross_page_xobjects:
                         if any(
                             m in data_lower
                             for m in [
@@ -537,8 +530,8 @@ def _remove_watermark_xobjects(writer, cross_page_texts):
                             ]
                         ):
                             is_watermark = True
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
             if is_watermark:
                 watermark_names.add(name)
