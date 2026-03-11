@@ -187,8 +187,77 @@ def _collect_cross_page_texts(writer):
 
 
 def _remove_watermark_annotations(writer):
-    """Method 2: Remove watermark annotations from all pages."""
-    pass
+    """Method 2: Remove watermark annotations from all pages.
+
+    Targets:
+    - /Subtype /Watermark annotations
+    - /Stamp annotations containing watermark text
+    - Annotations with platform-specific URIs (studocu.com, etc.)
+    """
+    for page in writer.pages:
+        if "/Annots" not in page:
+            continue
+
+        try:
+            annots = page["/Annots"]
+            if not isinstance(annots, ArrayObject):
+                annots = annots.get_object()
+            if not isinstance(annots, ArrayObject):
+                continue
+        except Exception:
+            continue
+
+        indices_to_remove = []
+        for i in range(len(annots)):
+            try:
+                annot = annots[i].get_object()
+            except Exception:
+                continue
+
+            subtype = str(annot.get("/Subtype", ""))
+
+            # /Watermark subtype
+            if subtype == "/Watermark":
+                indices_to_remove.append(i)
+                continue
+
+            # /Stamp with watermark content
+            if subtype == "/Stamp":
+                contents = str(annot.get("/Contents", ""))
+                nm = str(annot.get("/NM", ""))
+                if PLATFORM_PATTERNS.search(contents) or PLATFORM_PATTERNS.search(nm):
+                    indices_to_remove.append(i)
+                    continue
+                if CLASSIC_WATERMARK_PATTERNS.search(contents):
+                    indices_to_remove.append(i)
+                    continue
+
+            # URI-based platform links
+            if "/A" in annot:
+                try:
+                    action = annot["/A"].get_object()
+                    uri = str(action.get("/URI", ""))
+                    if any(
+                        d in uri
+                        for d in [
+                            "studocu.com",
+                            "coursehero.com",
+                            "scribd.com",
+                            "chegg.com",
+                            "bartleby.com",
+                        ]
+                    ):
+                        indices_to_remove.append(i)
+                        continue
+                except Exception:
+                    pass
+
+        # Remove in reverse order to preserve indices
+        for i in reversed(indices_to_remove):
+            del annots[i]
+
+        if len(annots) == 0:
+            del page[NameObject("/Annots")]
 
 
 def _remove_watermark_streams(writer, cross_page_texts):

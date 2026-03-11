@@ -184,3 +184,78 @@ class TestRemoveWatermarkPassthrough:
         original_bytes = buf.getvalue()
         result = remove_watermark(original_bytes)
         assert result == original_bytes
+
+
+class TestRemoveWatermarkAnnotations:
+    def test_removes_watermark_subtype_annotation(self):
+        from pypdf import PdfReader, PdfWriter
+        from pypdf.generic import (
+            ArrayObject,
+            DictionaryObject,
+            NameObject,
+            NumberObject,
+            TextStringObject,
+        )
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=595, height=842)
+        page = writer.pages[0]
+
+        # Add /Watermark annotation
+        annot = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Annot"),
+                NameObject("/Subtype"): NameObject("/Watermark"),
+                NameObject("/Rect"): ArrayObject(
+                    [NumberObject(0), NumberObject(0), NumberObject(595), NumberObject(842)]
+                ),
+                NameObject("/Contents"): TextStringObject("CONFIDENTIAL"),
+            }
+        )
+        annot_ref = writer._add_object(annot)
+        page[NameObject("/Annots")] = ArrayObject([annot_ref])
+
+        buf = io.BytesIO()
+        writer.write(buf)
+
+        result = remove_watermark(buf.getvalue())
+
+        reader = PdfReader(io.BytesIO(result))
+        annots = reader.pages[0].get("/Annots")
+        assert annots is None or len(annots) == 0
+
+    def test_preserves_non_watermark_annotations(self):
+        from pypdf import PdfReader, PdfWriter
+        from pypdf.generic import (
+            ArrayObject,
+            DictionaryObject,
+            NameObject,
+            NumberObject,
+            TextStringObject,
+        )
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=595, height=842)
+        page = writer.pages[0]
+
+        # Add a /Link annotation (not watermark)
+        link_annot = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Annot"),
+                NameObject("/Subtype"): NameObject("/Link"),
+                NameObject("/Rect"): ArrayObject(
+                    [NumberObject(72), NumberObject(700), NumberObject(200), NumberObject(720)]
+                ),
+            }
+        )
+        link_ref = writer._add_object(link_annot)
+        page[NameObject("/Annots")] = ArrayObject([link_ref])
+
+        buf = io.BytesIO()
+        writer.write(buf)
+
+        result = remove_watermark(buf.getvalue())
+
+        reader = PdfReader(io.BytesIO(result))
+        annots = reader.pages[0].get("/Annots")
+        assert annots is not None and len(annots) == 1
