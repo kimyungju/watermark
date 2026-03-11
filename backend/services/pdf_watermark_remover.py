@@ -14,7 +14,6 @@ from pypdf.generic import (
     ArrayObject,
     NameObject,
     NumberObject,
-    TextStringObject,
 )
 
 # Known watermark platform patterns
@@ -177,8 +176,11 @@ def _collect_cross_page_texts(writer):
 
         page_texts.append(texts)
 
-    common = page_texts[0]
-    for texts in page_texts[1:]:
+    non_empty = [t for t in page_texts if t]
+    if not non_empty:
+        return set()
+    common = non_empty[0]
+    for texts in non_empty[1:]:
         common = common & texts
 
     return common
@@ -389,6 +391,12 @@ def _remove_inline_watermarks(writer, cross_page_texts):
                     current_color = (gray, gray, gray)
                 except (TypeError, ValueError):
                     pass
+            elif operator == b"k" and len(operands) == 4:
+                try:
+                    c, m, y, kk = (float(o) for o in operands)
+                    current_color = ((1 - c) * (1 - kk), (1 - m) * (1 - kk), (1 - y) * (1 - kk))
+                except (TypeError, ValueError):
+                    pass
 
             # Track font size outside text blocks
             if operator == b"Tf" and len(operands) >= 2:
@@ -418,6 +426,12 @@ def _remove_inline_watermarks(writer, cross_page_texts):
                         try:
                             gray = float(inner_operands[0])
                             block_color = (gray, gray, gray)
+                        except (TypeError, ValueError):
+                            pass
+                    elif inner_op == b"k" and len(inner_operands) == 4:
+                        try:
+                            c, m, y, kk = (float(o) for o in inner_operands)
+                            block_color = ((1 - c) * (1 - kk), (1 - m) * (1 - kk), (1 - y) * (1 - kk))
                         except (TypeError, ValueError):
                             pass
                     elif inner_op == b"Tf" and len(inner_operands) >= 2:
