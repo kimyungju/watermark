@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Commit Rules
+
+- Never include "Claude", "Opus", or any AI model name in commit messages or Co-Authored-By lines.
+
 ## Commands
 
 ```bash
