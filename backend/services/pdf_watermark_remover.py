@@ -334,14 +334,122 @@ def _remove_watermark_streams(writer, cross_page_texts):
             page[NameObject("/Contents")] = new_streams
 
 
+def _classify_group_ops(group_ops, cross_page_texts):
+    """Classify a q...Q group's text content as watermark or legitimate.
+
+    Args:
+        group_ops: list of (operands, operator) tuples between q and Q (exclusive)
+        cross_page_texts: set of text appearing on every page
+
+    Returns:
+        "all_watermark" - every BT...ET block is watermark (remove entire group)
+        "mixed"         - some watermark, some legitimate (remove only watermark blocks)
+        "no_text"       - no BT...ET blocks at all (keep as-is)
+        "clean"         - has text, none is watermark (keep as-is)
+    """
+    text_blocks = []  # list of (text, is_watermark)
+
+    current_color = None
+    current_font_size = None
+
+    i = 0
+    while i < len(group_ops):
+        operands, operator = group_ops[i]
+
+        # Track color
+        if operator == b"rg" and len(operands) == 3:
+            try:
+                current_color = tuple(float(o) for o in operands)
+            except (TypeError, ValueError):
+                pass
+        elif operator == b"g" and len(operands) == 1:
+            try:
+                gray = float(operands[0])
+                current_color = (gray, gray, gray)
+            except (TypeError, ValueError):
+                pass
+        elif operator == b"k" and len(operands) == 4:
+            try:
+                c, m, y, kk = (float(o) for o in operands)
+                current_color = ((1 - c) * (1 - kk), (1 - m) * (1 - kk), (1 - y) * (1 - kk))
+            except (TypeError, ValueError):
+                pass
+
+        # Track font size
+        if operator == b"Tf" and len(operands) >= 2:
+            try:
+                current_font_size = float(operands[1])
+            except (TypeError, ValueError):
+                pass
+
+        # Collect BT...ET block
+        if operator == b"BT":
+            block = [(operands, operator)]
+            block_color = current_color
+            block_font_size = current_font_size
+            i += 1
+            while i < len(group_ops) and group_ops[i][1] != b"ET":
+                inner_ops, inner_op = group_ops[i]
+                block.append((inner_ops, inner_op))
+                if inner_op == b"rg" and len(inner_ops) == 3:
+                    try:
+                        block_color = tuple(float(o) for o in inner_ops)
+                    except (TypeError, ValueError):
+                        pass
+                elif inner_op == b"g" and len(inner_ops) == 1:
+                    try:
+                        gray = float(inner_ops[0])
+                        block_color = (gray, gray, gray)
+                    except (TypeError, ValueError):
+                        pass
+                elif inner_op == b"k" and len(inner_ops) == 4:
+                    try:
+                        c, m, y, kk = (float(o) for o in inner_ops)
+                        block_color = ((1 - c) * (1 - kk), (1 - m) * (1 - kk), (1 - y) * (1 - kk))
+                    except (TypeError, ValueError):
+                        pass
+                elif inner_op == b"Tf" and len(inner_ops) >= 2:
+                    try:
+                        block_font_size = float(inner_ops[1])
+                    except (TypeError, ValueError):
+                        pass
+                i += 1
+            if i < len(group_ops):
+                block.append(group_ops[i])  # ET
+                i += 1
+
+            text = _extract_text_from_block(block)
+            is_wm = _should_remove_block(text, block_color, block_font_size, cross_page_texts)
+            text_blocks.append((text.strip(), is_wm))
+            continue
+
+        i += 1
+
+    if not text_blocks:
+        return "no_text"
+
+    non_empty = [(t, wm) for t, wm in text_blocks if t]
+    if not non_empty:
+        return "no_text"  # Only empty text blocks — treat as no text
+
+    all_wm = all(is_wm for _, is_wm in non_empty)
+    any_wm = any(is_wm for _, is_wm in non_empty)
+
+    if all_wm:
+        return "all_watermark"
+    elif any_wm:
+        return "mixed"
+    else:
+        return "clean"
+
+
 def _remove_inline_watermarks(writer, cross_page_texts):
     """Method 3: Remove inline watermark operators from content streams.
 
-    Parses each page's content stream into BT...ET text blocks.
-    For each block, extracts text and checks against watermark heuristics
-    (known patterns, cross-page repetition, light color, small font).
-    Removes entire BT...ET blocks identified as watermarks.
-    Non-text operators (images, paths, graphics) are never touched.
+    Parses each page's content stream. For q...Q groups whose text is
+    entirely watermark-related, removes the whole group (including background
+    rectangles). For mixed groups, removes only watermark BT...ET blocks.
+    Non-text operators outside watermark groups are never touched.
     """
     for page in writer.pages:
         try:
@@ -356,112 +464,133 @@ def _remove_inline_watermarks(writer, cross_page_texts):
         except Exception:
             continue
 
-        new_ops = []
-        # Track graphics state for color/font detection
-        current_color = None
-        current_font_size = None
-        state_stack = []
-
-        i = 0
-        while i < len(ops):
-            operands, operator = ops[i]
-
-            # Track graphics state stack (q saves, Q restores)
-            if operator == b"q":
-                state_stack.append((current_color, current_font_size))
-                new_ops.append((operands, operator))
-                i += 1
-                continue
-            elif operator == b"Q":
-                if state_stack:
-                    current_color, current_font_size = state_stack.pop()
-                new_ops.append((operands, operator))
-                i += 1
-                continue
-
-            # Track fill color outside text blocks
-            if operator == b"rg" and len(operands) == 3:
-                try:
-                    current_color = tuple(float(o) for o in operands)
-                except (TypeError, ValueError):
-                    pass
-            elif operator == b"g" and len(operands) == 1:
-                try:
-                    gray = float(operands[0])
-                    current_color = (gray, gray, gray)
-                except (TypeError, ValueError):
-                    pass
-            elif operator == b"k" and len(operands) == 4:
-                try:
-                    c, m, y, kk = (float(o) for o in operands)
-                    current_color = ((1 - c) * (1 - kk), (1 - m) * (1 - kk), (1 - y) * (1 - kk))
-                except (TypeError, ValueError):
-                    pass
-
-            # Track font size outside text blocks
-            if operator == b"Tf" and len(operands) >= 2:
-                try:
-                    current_font_size = float(operands[1])
-                except (TypeError, ValueError):
-                    pass
-
-            # Collect entire BT...ET text block
-            if operator == b"BT":
-                block = [(operands, operator)]
-                block_color = current_color
-                block_font_size = current_font_size
-                i += 1
-
-                while i < len(ops) and ops[i][1] != b"ET":
-                    inner_operands, inner_op = ops[i]
-                    block.append((inner_operands, inner_op))
-
-                    # Track state changes within block
-                    if inner_op == b"rg" and len(inner_operands) == 3:
-                        try:
-                            block_color = tuple(float(o) for o in inner_operands)
-                        except (TypeError, ValueError):
-                            pass
-                    elif inner_op == b"g" and len(inner_operands) == 1:
-                        try:
-                            gray = float(inner_operands[0])
-                            block_color = (gray, gray, gray)
-                        except (TypeError, ValueError):
-                            pass
-                    elif inner_op == b"k" and len(inner_operands) == 4:
-                        try:
-                            c, m, y, kk = (float(o) for o in inner_operands)
-                            block_color = ((1 - c) * (1 - kk), (1 - m) * (1 - kk), (1 - y) * (1 - kk))
-                        except (TypeError, ValueError):
-                            pass
-                    elif inner_op == b"Tf" and len(inner_operands) >= 2:
-                        try:
-                            block_font_size = float(inner_operands[1])
-                        except (TypeError, ValueError):
-                            pass
-
-                    i += 1
-
-                # Include the ET operator
-                if i < len(ops):
-                    block.append(ops[i])
-                    i += 1
-
-                # Extract text and decide whether to remove
-                text = _extract_text_from_block(block)
-                if _should_remove_block(
-                    text, block_color, block_font_size, cross_page_texts
-                ):
-                    continue  # Skip entire BT...ET block
-                else:
-                    new_ops.extend(block)
-                    continue
-
-            new_ops.append((operands, operator))
-            i += 1
+        new_ops = _filter_watermark_ops(ops, cross_page_texts)
 
         content.operations = new_ops
         page.replace_contents(content)
+
+
+def _filter_watermark_ops(ops, cross_page_texts):
+    """Recursively filter operations, removing watermark groups and text blocks.
+
+    When a q...Q group contains only watermark text,
+    the whole group (including rectangles) is dropped.
+    """
+    new_ops = []
+    current_color = None
+    current_font_size = None
+
+    i = 0
+    while i < len(ops):
+        operands, operator = ops[i]
+
+        # Track color state
+        if operator == b"rg" and len(operands) == 3:
+            try:
+                current_color = tuple(float(o) for o in operands)
+            except (TypeError, ValueError):
+                pass
+        elif operator == b"g" and len(operands) == 1:
+            try:
+                gray = float(operands[0])
+                current_color = (gray, gray, gray)
+            except (TypeError, ValueError):
+                pass
+        elif operator == b"k" and len(operands) == 4:
+            try:
+                c, m, y, kk = (float(o) for o in operands)
+                current_color = ((1 - c) * (1 - kk), (1 - m) * (1 - kk), (1 - y) * (1 - kk))
+            except (TypeError, ValueError):
+                pass
+
+        # Track font size
+        if operator == b"Tf" and len(operands) >= 2:
+            try:
+                current_font_size = float(operands[1])
+            except (TypeError, ValueError):
+                pass
+
+        # Handle q...Q groups
+        if operator == b"q":
+            # Collect all ops until matching Q
+            group_ops = []
+            nesting = 1
+            i += 1
+            while i < len(ops) and nesting > 0:
+                g_operands, g_operator = ops[i]
+                if g_operator == b"q":
+                    nesting += 1
+                elif g_operator == b"Q":
+                    nesting -= 1
+                    if nesting == 0:
+                        break
+                group_ops.append((g_operands, g_operator))
+                i += 1
+            i += 1  # skip the closing Q
+
+            # Check if entire group is watermark-only
+            classification = _classify_group_ops(group_ops, cross_page_texts)
+            if classification == "all_watermark":
+                continue  # Drop entire group (q + contents + Q)
+
+            # Keep group: recursively filter its contents
+            filtered = _filter_watermark_ops(group_ops, cross_page_texts)
+            new_ops.append((operands, b"q"))  # q
+            new_ops.extend(filtered)
+            new_ops.append(([], b"Q"))  # Q
+            continue
+
+        # Handle BT...ET text blocks (top-level or inside kept groups)
+        if operator == b"BT":
+            block = [(operands, operator)]
+            block_color = current_color
+            block_font_size = current_font_size
+            i += 1
+
+            while i < len(ops) and ops[i][1] != b"ET":
+                inner_operands, inner_op = ops[i]
+                block.append((inner_operands, inner_op))
+
+                if inner_op == b"rg" and len(inner_operands) == 3:
+                    try:
+                        block_color = tuple(float(o) for o in inner_operands)
+                    except (TypeError, ValueError):
+                        pass
+                elif inner_op == b"g" and len(inner_operands) == 1:
+                    try:
+                        gray = float(inner_operands[0])
+                        block_color = (gray, gray, gray)
+                    except (TypeError, ValueError):
+                        pass
+                elif inner_op == b"k" and len(inner_operands) == 4:
+                    try:
+                        c, m, y, kk = (float(o) for o in inner_operands)
+                        block_color = ((1 - c) * (1 - kk), (1 - m) * (1 - kk), (1 - y) * (1 - kk))
+                    except (TypeError, ValueError):
+                        pass
+                elif inner_op == b"Tf" and len(inner_operands) >= 2:
+                    try:
+                        block_font_size = float(inner_operands[1])
+                    except (TypeError, ValueError):
+                        pass
+
+                i += 1
+
+            if i < len(ops):
+                block.append(ops[i])  # ET
+                i += 1
+
+            text = _extract_text_from_block(block)
+            if _should_remove_block(text, block_color, block_font_size, cross_page_texts):
+                continue  # Remove watermark text block
+            else:
+                new_ops.extend(block)
+                continue
+
+        new_ops.append((operands, operator))
+        i += 1
+
+    return new_ops
 
 
 def _remove_watermark_xobjects(writer, cross_page_texts):
