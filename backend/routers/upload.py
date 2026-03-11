@@ -88,6 +88,15 @@ async def upload_files(
             out.write(content)
         store.update_job(job["id"], input_path=input_path)
 
+    # Dispatch processing for each job in background threads
+    import threading
+    from services.processor import _process_job
+
+    for job in jobs:
+        t = threading.Timer(0.1, _process_job, args=(store, job["id"]))
+        t.daemon = True
+        t.start()
+
     return {
         "batch_id": batch_id,
         "jobs": [
