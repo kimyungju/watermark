@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from routers import health, upload
+from routers import health, upload, status
 from services.job_store import JobStore
 from services.rate_limiter import RateLimiter
 
@@ -50,3 +50,4 @@ async def global_error_handler(request: Request, exc: Exception):
 
 app.include_router(health.router)
 app.include_router(upload.router)
+app.include_router(status.router)
