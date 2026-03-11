@@ -12,6 +12,7 @@ from services.pdf_watermark_remover import (
     _is_light_color,
     _should_remove_block,
     _collect_cross_page_texts,
+    _is_watermark_stream,
     remove_watermark,
 )
 
@@ -366,3 +367,144 @@ class TestRemoveInlineWatermarks:
 
         reader = PdfReader(io.BytesIO(result))
         assert len(reader.pages) == 5
+
+
+class TestRemoveWatermarkStreams:
+    def test_detects_watermark_stream(self):
+        """Stream containing only watermark text should be detected."""
+        data = b"BT /F1 8 Tf 200 800 Td (messages.downloaded_by) Tj ET"
+        cross = {"messages.downloaded_by"}
+        assert _is_watermark_stream(data, cross) is True
+
+    def test_normal_stream_not_detected(self):
+        """Stream with normal content should not be detected."""
+        data = b"BT /F1 12 Tf 72 700 Td (Normal content here) Tj ET"
+        assert _is_watermark_stream(data, set()) is False
+
+    def test_multi_stream_pdf_removes_watermark_stream(self):
+        """Watermark in separate content stream should be removed."""
+        from pypdf import PdfWriter as PW
+        from pypdf.generic import (
+            ArrayObject,
+            DecodedStreamObject,
+            DictionaryObject,
+            NameObject,
+        )
+
+        pw = PW()
+        pw.add_blank_page(width=595, height=842)
+        page = pw.pages[0]
+
+        # Main content stream
+        main = DecodedStreamObject()
+        main.set_data(b"BT /F1 12 Tf 72 700 Td (Normal content) Tj ET")
+        main_ref = pw._add_object(main)
+
+        # Watermark stream
+        wm = DecodedStreamObject()
+        wm.set_data(
+            b"BT /F1 8 Tf 200 800 Td (messages.downloaded_by) Tj ET"
+        )
+        wm_ref = pw._add_object(wm)
+
+        page[NameObject("/Contents")] = ArrayObject([main_ref, wm_ref])
+
+        # Add font resources
+        font = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }
+        )
+        font_ref = pw._add_object(font)
+        page[NameObject("/Resources")] = DictionaryObject(
+            {
+                NameObject("/Font"): DictionaryObject(
+                    {NameObject("/F1"): font_ref}
+                )
+            }
+        )
+
+        buf = io.BytesIO()
+        pw.write(buf)
+
+        result = remove_watermark(buf.getvalue())
+
+        reader = PdfReader(io.BytesIO(result))
+        text = reader.pages[0].extract_text()
+        # Normal content should survive
+        assert "Normal content" in text
+        # Watermark should be gone (removed either by stream removal or inline)
+        assert "messages.downloaded_by" not in text
+
+
+class TestRemoveWatermarkXObjects:
+    def test_removes_watermark_form_xobject(self):
+        """Form XObject containing watermark text should be removed."""
+        from pypdf import PdfWriter as PW
+        from pypdf.generic import (
+            ArrayObject,
+            DecodedStreamObject,
+            DictionaryObject,
+            NameObject,
+            NumberObject,
+        )
+
+        pw = PW()
+        pw.add_blank_page(width=595, height=842)
+        page = pw.pages[0]
+
+        # Watermark Form XObject
+        form = DecodedStreamObject()
+        form.set_data(
+            b"BT /F1 48 Tf 0.8 0.8 0.8 rg 100 400 Td (WATERMARK) Tj ET"
+        )
+        form[NameObject("/Type")] = NameObject("/XObject")
+        form[NameObject("/Subtype")] = NameObject("/Form")
+        form[NameObject("/BBox")] = ArrayObject(
+            [NumberObject(0), NumberObject(0), NumberObject(595), NumberObject(842)]
+        )
+        form_ref = pw._add_object(form)
+
+        # Font resource
+        font = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }
+        )
+        font_ref = pw._add_object(font)
+
+        # Content stream that draws XObject then normal text
+        content = DecodedStreamObject()
+        content.set_data(
+            b"q /WM0 Do Q BT /F1 12 Tf 72 700 Td (Normal content) Tj ET"
+        )
+        content_ref = pw._add_object(content)
+        page[NameObject("/Contents")] = content_ref
+
+        page[NameObject("/Resources")] = DictionaryObject(
+            {
+                NameObject("/Font"): DictionaryObject(
+                    {NameObject("/F1"): font_ref}
+                ),
+                NameObject("/XObject"): DictionaryObject(
+                    {NameObject("/WM0"): form_ref}
+                ),
+            }
+        )
+
+        buf = io.BytesIO()
+        pw.write(buf)
+
+        result = remove_watermark(buf.getvalue())
+
+        reader = PdfReader(io.BytesIO(result))
+        page_out = reader.pages[0]
+
+        # Watermark XObject should be removed from resources
+        xobjects = page_out.get("/Resources", {}).get("/XObject")
+        if xobjects:
+            assert "/WM0" not in xobjects

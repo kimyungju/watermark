@@ -260,9 +260,78 @@ def _remove_watermark_annotations(writer):
             del page[NameObject("/Annots")]
 
 
+def _is_watermark_stream(data: bytes, cross_page_texts: set) -> bool:
+    """Check if a content stream contains only watermark content.
+
+    Uses byte-level scanning for platform markers, then extracts text
+    via regex to verify all content is watermark-related.
+    """
+    data_lower = data.lower()
+
+    # Must contain known markers
+    markers = [
+        b"downloaded_by", b"lomoarcpsd", b"studocu", b"coursehero",
+        b"scribd", b"chegg", b"bartleby", b"not_sponsored",
+    ]
+    if not any(m in data_lower for m in markers):
+        return False
+
+    # Extract parenthesized strings (PDF text operands)
+    texts = re.findall(rb"\(([^)]*)\)", data)
+    if not texts:
+        return True  # Has marker bytes but no extractable text
+
+    # Check if ALL extracted text is watermark-related
+    for text_bytes in texts:
+        text = text_bytes.decode("latin-1", errors="ignore").strip()
+        if not text:
+            continue
+        if not _is_watermark_text(text, cross_page_texts):
+            return False  # Found non-watermark text — keep the stream
+
+    return True
+
+
 def _remove_watermark_streams(writer, cross_page_texts):
-    """Method 1: Remove watermark-containing content streams from /Contents arrays."""
-    pass
+    """Method 1: Remove watermark-containing content streams from /Contents arrays.
+
+    When a page's /Contents is an ArrayObject with multiple streams,
+    scans each stream for watermark-only content and removes it.
+    Only removes streams where ALL text is watermark-related.
+    Single-stream pages are handled by Method 3 (inline removal).
+    """
+    for page in writer.pages:
+        contents_ref = page.get("/Contents")
+        if contents_ref is None:
+            continue
+
+        try:
+            contents_obj = contents_ref.get_object()
+        except Exception:
+            continue
+
+        if not isinstance(contents_obj, ArrayObject):
+            continue  # Single stream — handled by Method 3
+
+        if len(contents_obj) <= 1:
+            continue
+
+        new_streams = ArrayObject()
+        for stream_ref in contents_obj:
+            try:
+                stream = stream_ref.get_object()
+                data = stream.get_data()
+            except Exception:
+                new_streams.append(stream_ref)
+                continue
+
+            if _is_watermark_stream(data, cross_page_texts):
+                continue  # Remove this stream
+
+            new_streams.append(stream_ref)
+
+        if len(new_streams) < len(contents_obj) and len(new_streams) > 0:
+            page[NameObject("/Contents")] = new_streams
 
 
 def _remove_inline_watermarks(writer, cross_page_texts):
@@ -384,8 +453,121 @@ def _remove_inline_watermarks(writer, cross_page_texts):
 
 
 def _remove_watermark_xobjects(writer, cross_page_texts):
-    """Method 4: Remove watermark XObject overlays."""
-    pass
+    """Method 4: Remove watermark XObject overlays.
+
+    Detects Form XObjects that contain watermark text or appear as overlays
+    on every page. Removes their /Do references from content streams
+    and deletes them from /Resources/XObject.
+    """
+    # First pass: count which XObjects appear on how many pages
+    xobj_page_count = Counter()
+    total_pages = len(writer.pages)
+
+    for page in writer.pages:
+        try:
+            content = page.get_contents()
+            if content is None:
+                continue
+            for operands, operator in content.operations:
+                if operator == b"Do" and operands:
+                    name = str(operands[0])
+                    xobj_page_count[name] += 1
+        except Exception:
+            continue
+
+    # XObjects on every page are suspicious
+    cross_page_xobjects = {
+        name
+        for name, count in xobj_page_count.items()
+        if count >= total_pages and total_pages > 1
+    }
+
+    for page in writer.pages:
+        if "/Resources" not in page:
+            continue
+        try:
+            resources = page["/Resources"].get_object()
+        except Exception:
+            continue
+        if "/XObject" not in resources:
+            continue
+
+        try:
+            xobjects = resources["/XObject"].get_object()
+        except Exception:
+            continue
+
+        watermark_names = set()
+
+        for name in list(xobjects.keys()):
+            try:
+                xobj = xobjects[name].get_object()
+            except Exception:
+                continue
+
+            subtype = str(xobj.get("/Subtype", ""))
+            is_watermark = False
+
+            # Check Form XObjects for watermark content
+            if subtype == "/Form":
+                try:
+                    data = xobj.get_data()
+                    data_lower = data.lower()
+                    for marker in [
+                        b"watermark", b"draft", b"confidential", b"sample",
+                        b"downloaded_by", b"lomoarcpsd", b"studocu",
+                        b"coursehero", b"scribd",
+                    ]:
+                        if marker in data_lower:
+                            is_watermark = True
+                            break
+                except Exception:
+                    pass
+
+                # Cross-page Form XObjects with watermark markers
+                if not is_watermark and name in cross_page_xobjects:
+                    try:
+                        data = xobj.get_data()
+                        data_lower = data.lower()
+                        if any(
+                            m in data_lower
+                            for m in [
+                                b"watermark", b"downloaded", b"studocu",
+                                b"coursehero", b"scribd",
+                            ]
+                        ):
+                            is_watermark = True
+                    except Exception:
+                        pass
+
+            if is_watermark:
+                watermark_names.add(name)
+
+        if not watermark_names:
+            continue
+
+        # Remove Do references from content stream
+        try:
+            content = page.get_contents()
+            if content is not None:
+                new_ops = []
+                for operands, operator in content.operations:
+                    if operator == b"Do" and operands:
+                        xobj_name = str(operands[0])
+                        if xobj_name in watermark_names:
+                            continue
+                    new_ops.append((operands, operator))
+                content.operations = new_ops
+                page.replace_contents(content)
+        except Exception:
+            pass
+
+        # Remove XObject entries from resources
+        for name in watermark_names:
+            try:
+                del xobjects[NameObject(name)]
+            except (KeyError, Exception):
+                pass
 
 
 def remove_watermark(input_pdf_bytes: bytes) -> bytes:
