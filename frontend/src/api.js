@@ -36,9 +36,18 @@ export async function getBatchStatus(batchId) {
   return res.json();
 }
 
-export function previewUrl(jobId, type = "processed") {
-  const param = type === "original" ? "?type=original" : "";
-  return `${API_BASE}/preview/${jobId}${param}`;
+export function previewUrl(jobId, type = "processed", page = 0) {
+  const params = new URLSearchParams();
+  if (type === "original") params.set("type", "original");
+  if (page > 0) params.set("page", page);
+  const qs = params.toString();
+  return `${API_BASE}/preview/${jobId}${qs ? `?${qs}` : ""}`;
+}
+
+export async function getPreviewInfo(jobId) {
+  const res = await fetch(`${API_BASE}/preview/${jobId}/info`);
+  if (!res.ok) return { page_count: 1 };
+  return res.json();
 }
 
 export function downloadUrl(jobId) {

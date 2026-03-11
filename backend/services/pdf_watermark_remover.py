@@ -281,10 +281,15 @@ def _is_watermark_stream(data: bytes, cross_page_texts: set) -> bool:
     if not texts:
         return True  # Has marker bytes but no extractable text
 
-    # Check if ALL extracted text is watermark-related
+    # Check if ALL readable text is watermark-related.
+    # Skip CID/binary-encoded text (font glyph indices, not human-readable).
     for text_bytes in texts:
         text = text_bytes.decode("latin-1", errors="ignore").strip()
         if not text:
+            continue
+        # Skip binary/CID-encoded strings (>30% non-printable bytes)
+        non_printable = sum(1 for b in text_bytes if b < 32 or b > 126)
+        if non_printable > len(text_bytes) * 0.3:
             continue
         if not _is_watermark_text(text, cross_page_texts):
             return False  # Found non-watermark text — keep the stream

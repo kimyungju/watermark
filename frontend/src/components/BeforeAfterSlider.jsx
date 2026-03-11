@@ -7,6 +7,11 @@ export default function BeforeAfterSlider({ beforeSrc, afterSrc }) {
   const containerRef = useRef(null);
   const dragging = useRef(false);
 
+  // Reset loaded state when images change (page navigation)
+  useEffect(() => {
+    setLoaded(false);
+  }, [beforeSrc, afterSrc]);
+
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;

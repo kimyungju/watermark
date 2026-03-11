@@ -1,5 +1,6 @@
+import { useState, useEffect } from "react";
 import BeforeAfterSlider from "./BeforeAfterSlider";
-import { previewUrl, downloadUrl, downloadAllUrl } from "../api";
+import { previewUrl, downloadUrl, downloadAllUrl, getPreviewInfo } from "../api";
 
 function DownloadIcon() {
   return (
@@ -17,6 +18,96 @@ function DownloadIcon() {
       <polyline points="3.5 6.5 7 10 10.5 6.5" />
       <path d="M2 11.5h10" />
     </svg>
+  );
+}
+
+function PageNav({ page, pageCount, onPageChange }) {
+  if (pageCount <= 1) return null;
+  return (
+    <div className="flex items-center justify-center gap-3 py-2">
+      <button
+        onClick={() => onPageChange(page - 1)}
+        disabled={page === 0}
+        className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium transition-all duration-150 disabled:opacity-30"
+        style={{ background: "var(--color-surface)", color: "var(--color-text)" }}
+      >
+        Prev
+      </button>
+      <span className="text-xs text-[var(--color-text-muted)]">
+        Page {page + 1} of {pageCount}
+      </span>
+      <button
+        onClick={() => onPageChange(page + 1)}
+        disabled={page >= pageCount - 1}
+        className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium transition-all duration-150 disabled:opacity-30"
+        style={{ background: "var(--color-surface)", color: "var(--color-text)" }}
+      >
+        Next
+      </button>
+    </div>
+  );
+}
+
+function JobCard({ job, index }) {
+  const [page, setPage] = useState(0);
+  const [pageCount, setPageCount] = useState(1);
+
+  useEffect(() => {
+    getPreviewInfo(job.id).then((info) => setPageCount(info.page_count));
+  }, [job.id]);
+
+  return (
+    <div
+      className="animate-fade-up overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]"
+      style={{ animationDelay: `${index * 0.08}s` }}
+    >
+      {/* Card header */}
+      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-3.5">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-[var(--color-text)]">
+            {job.filename}
+          </p>
+          {job.watermark_detected === false && (
+            <p className="mt-0.5 text-xs text-[var(--color-warning)]">
+              No watermark detected &mdash; original file returned
+            </p>
+          )}
+          {job.watermark_detected === true && (
+            <p className="mt-0.5 text-xs text-[var(--color-success)]">
+              Watermark removed
+            </p>
+          )}
+        </div>
+        <a
+          href={downloadUrl(job.id)}
+          className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-200"
+          style={{
+            background: "var(--color-accent)",
+            color: "var(--color-base)",
+          }}
+          onMouseEnter={(e) =>
+            (e.currentTarget.style.background = "var(--color-accent-hover)")
+          }
+          onMouseLeave={(e) =>
+            (e.currentTarget.style.background = "var(--color-accent)")
+          }
+        >
+          <DownloadIcon />
+          Download
+        </a>
+      </div>
+
+      {/* Before/After comparison */}
+      {job.watermark_detected !== false && (
+        <div className="p-4">
+          <BeforeAfterSlider
+            beforeSrc={previewUrl(job.id, "original", page)}
+            afterSrc={previewUrl(job.id, "processed", page)}
+          />
+          <PageNav page={page} pageCount={pageCount} onPageChange={setPage} />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -82,58 +173,7 @@ export default function ResultView({ jobs, batchId, onReset }) {
       {/* Result cards */}
       <div className="mt-8 space-y-8">
         {doneJobs.map((job, i) => (
-          <div
-            key={job.id}
-            className="animate-fade-up overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]"
-            style={{ animationDelay: `${i * 0.08}s` }}
-          >
-            {/* Card header */}
-            <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-3.5">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-[var(--color-text)]">
-                  {job.filename}
-                </p>
-                {job.watermark_detected === false && (
-                  <p className="mt-0.5 text-xs text-[var(--color-warning)]">
-                    No watermark detected &mdash; original file returned
-                  </p>
-                )}
-                {job.watermark_detected === true && (
-                  <p className="mt-0.5 text-xs text-[var(--color-success)]">
-                    Watermark removed
-                  </p>
-                )}
-              </div>
-              <a
-                href={downloadUrl(job.id)}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition-all duration-200"
-                style={{
-                  background: "var(--color-accent)",
-                  color: "var(--color-base)",
-                }}
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.background =
-                    "var(--color-accent-hover)")
-                }
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.background = "var(--color-accent)")
-                }
-              >
-                <DownloadIcon />
-                Download
-              </a>
-            </div>
-
-            {/* Before/After comparison */}
-            {job.watermark_detected !== false && (
-              <div className="p-4">
-                <BeforeAfterSlider
-                  beforeSrc={previewUrl(job.id, "original")}
-                  afterSrc={previewUrl(job.id)}
-                />
-              </div>
-            )}
-          </div>
+          <JobCard key={job.id} job={job} index={i} />
         ))}
       </div>
     </div>

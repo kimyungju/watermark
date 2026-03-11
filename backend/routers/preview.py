@@ -3,8 +3,7 @@ import tempfile
 
 import fitz  # PyMuPDF
 from fastapi import APIRouter, Depends, Request, HTTPException
-from fastapi.responses import FileResponse
-from PIL import Image
+from fastapi.responses import FileResponse, JSONResponse
 
 from services.job_store import JobStore
 
@@ -15,45 +14,40 @@ def get_job_store(request: Request) -> JobStore:
     return request.app.state.job_store
 
 
-def _render_pdf_preview(pdf_path: str, job_id: str, preview_type: str) -> str:
-    """Render all pages of a PDF as a single stacked PNG at 150 DPI."""
-    preview_path = os.path.join(
-        tempfile.gettempdir(), f"watermark-{job_id}", f"preview_{preview_type}.png"
-    )
+def _render_page_preview(pdf_path: str, job_id: str, preview_type: str, page: int) -> str:
+    """Render a single page of a PDF as PNG at 150 DPI."""
+    preview_dir = os.path.join(tempfile.gettempdir(), f"watermark-{job_id}")
+    preview_path = os.path.join(preview_dir, f"preview_{preview_type}_p{page}.png")
+
     if os.path.exists(preview_path):
         return preview_path
 
-    os.makedirs(os.path.dirname(preview_path), exist_ok=True)
+    os.makedirs(preview_dir, exist_ok=True)
 
     doc = fitz.open(pdf_path)
-    page_images = []
-    for page in doc:
-        pix = page.get_pixmap(dpi=150)
-        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        page_images.append(img)
+    if page >= len(doc):
+        doc.close()
+        raise HTTPException(status_code=400, detail=f"Page {page} out of range (0-{len(doc)-1})")
+
+    pix = doc[page].get_pixmap(dpi=150)
+    pix.save(preview_path)
     doc.close()
-
-    if not page_images:
-        raise HTTPException(status_code=400, detail="PDF has no pages")
-
-    # Stack all pages vertically into one image
-    total_width = max(img.width for img in page_images)
-    total_height = sum(img.height for img in page_images)
-    combined = Image.new("RGB", (total_width, total_height), (255, 255, 255))
-
-    y_offset = 0
-    for img in page_images:
-        combined.paste(img, (0, y_offset))
-        y_offset += img.height
-
-    combined.save(preview_path, "PNG")
     return preview_path
+
+
+def _get_page_count(pdf_path: str) -> int:
+    """Get the number of pages in a PDF."""
+    doc = fitz.open(pdf_path)
+    count = len(doc)
+    doc.close()
+    return count
 
 
 @router.get("/preview/{job_id}")
 async def get_preview(
     job_id: str,
     type: str = "processed",
+    page: int = 0,
     store: JobStore = Depends(get_job_store),
 ):
     job = store.get_job(job_id)
@@ -71,8 +65,32 @@ async def get_preview(
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="File not found")
 
-    # For PDFs, render all pages as stacked PNG preview
+    # For PDFs, render requested page as PNG preview
     if path.lower().endswith(".pdf"):
-        path = _render_pdf_preview(path, job_id, type)
+        path = _render_page_preview(path, job_id, type, page)
 
     return FileResponse(path)
+
+
+@router.get("/preview/{job_id}/info")
+async def get_preview_info(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+):
+    """Return page count for the processed PDF."""
+    job = store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job["status"] != "done":
+        raise HTTPException(status_code=400, detail="Job not yet processed")
+
+    path = job.get("output_path") or job.get("input_path")
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    page_count = 1
+    if path.lower().endswith(".pdf"):
+        page_count = _get_page_count(path)
+
+    return JSONResponse({"page_count": page_count})
