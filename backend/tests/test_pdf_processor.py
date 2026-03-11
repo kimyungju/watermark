@@ -1,7 +1,7 @@
 import os
 import tempfile
 
-import fitz  # PyMuPDF
+import fitz
 import pytest
 
 from services.pdf_processor import PdfProcessor
@@ -19,9 +19,7 @@ def watermarked_pdf_path():
     doc = fitz.open()
     for _ in range(3):
         page = doc.new_page(width=595, height=842)
-        # Normal content
         page.insert_text((72, 72), "This is normal content.", fontsize=12)
-        # Watermark: light gray text repeated on every page
         page.insert_text(
             (100, 400),
             "CONFIDENTIAL",
@@ -99,7 +97,6 @@ def studocu_pdf_path():
     for i in range(3):
         page = doc.new_page(width=595, height=842)
         page.insert_text((72, 72), f"Page {i+1} content here.", fontsize=12)
-        # StuDocu-style watermark: appears on every page
         page.insert_text(
             (200, 800),
             "messages.downloaded_by",
@@ -145,7 +142,6 @@ def repeated_text_pdf_path():
     for i in range(3):
         page = doc.new_page(width=595, height=842)
         page.insert_text((72, 72), f"Chapter {i+1} content.", fontsize=12)
-        # Branding footer on every page — not in WATERMARK_PATTERNS
         page.insert_text(
             (150, 820),
             "This document is available on MyPlatform",
@@ -167,3 +163,28 @@ def test_detect_repeated_non_keyword_text(processor, repeated_text_pdf_path):
     assert len(watermarks) > 0
     texts = {w["text"] for w in watermarks if w["type"] == "text"}
     assert "This document is available on MyPlatform" in texts
+
+
+def test_process_preserves_text_selectability(processor):
+    """Output PDF should preserve text selectability (no rasterization)."""
+    path = os.path.join(tempfile.gettempdir(), "test_text_selectable.pdf")
+    doc = fitz.open()
+    for _ in range(3):
+        page = doc.new_page()
+        page.insert_text((72, 72), "Selectable text content.", fontsize=12)
+        page.insert_text(
+            (200, 800), "messages.downloaded_by", fontsize=8, color=(0.3, 0.3, 0.3)
+        )
+    doc.save(path)
+    doc.close()
+
+    output_dir = tempfile.mkdtemp()
+    result = processor.process(path, output_dir)
+    assert result["watermark_detected"] is True
+
+    # Verify text is still selectable (not rasterized)
+    out_doc = fitz.open(result["output_path"])
+    text = out_doc[0].get_text()
+    assert "Selectable text content" in text
+    out_doc.close()
+    os.remove(path)
