@@ -550,3 +550,235 @@ class TestRemoveWatermarkXObjects:
         xobjects = page_out.get("/Resources", {}).get("/XObject")
         if xobjects:
             assert "/WM0" not in xobjects
+
+
+class TestWhiteBoxArtifactRemoval:
+    """Tests for removing white rectangle artifacts from watermark groups."""
+
+    def _make_single_stream_pdf(self, content_stream_bytes: bytes) -> bytes:
+        """Helper: create a 1-page PDF with a single raw content stream."""
+        from pypdf import PdfWriter
+        from pypdf.generic import (
+            DecodedStreamObject,
+            DictionaryObject,
+            NameObject,
+        )
+
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=612, height=792)
+        stream = DecodedStreamObject()
+        stream.set_data(content_stream_bytes)
+        s_ref = writer._add_object(stream)
+        page[NameObject("/Contents")] = s_ref
+
+        font_dict = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }
+        )
+        font_ref = writer._add_object(font_dict)
+        page[NameObject("/Resources")] = DictionaryObject(
+            {
+                NameObject("/Font"): DictionaryObject(
+                    {NameObject("/F1"): font_ref}
+                )
+            }
+        )
+        buf = io.BytesIO()
+        writer.write(buf)
+        return buf.getvalue()
+
+    def test_removes_white_rect_with_watermark_text(self):
+        """A q...Q group with white rect + watermark text should be fully removed."""
+        pdf_bytes = self._make_single_stream_pdf(
+            b"q\n"
+            b"BT /F1 12 Tf 100 700 Td (Legitimate content.) Tj ET\n"
+            b"q\n"
+            b"1 1 1 rg\n"
+            b"0 0 612 50 re\n"
+            b"f\n"
+            b"BT /F1 8 Tf 100 20 Td (Downloaded by Test User) Tj ET\n"
+            b"BT /F1 6 Tf 400 20 Td (lOMoARcPSD|12345678) Tj ET\n"
+            b"Q\n"
+            b"Q\n"
+        )
+        result = remove_watermark(pdf_bytes)
+        reader = PdfReader(io.BytesIO(result))
+        data = reader.pages[0].get_contents().get_data()
+
+        assert b"1 1 1 rg" not in data, "White color operator should be removed"
+        assert b"612 50 re" not in data, "Rectangle operator should be removed"
+        assert b"Downloaded" not in data, "Watermark text should be removed"
+        assert b"lOMoARcPSD" not in data, "Tracking ID should be removed"
+        assert b"Legitimate content" in data, "Content must be preserved"
+
+    def test_removes_multiple_watermark_groups(self):
+        """Multiple watermark q...Q groups on one page should all be removed."""
+        pdf_bytes = self._make_single_stream_pdf(
+            b"q\n"
+            b"BT /F1 12 Tf 100 700 Td (Page content here.) Tj ET\n"
+            b"q\n"
+            b"1 1 1 rg\n"
+            b"0 700 612 92 re\n"
+            b"f\n"
+            b"BT /F1 10 Tf 50 750 Td (Downloaded by Test User) Tj ET\n"
+            b"Q\n"
+            b"q\n"
+            b"0.9 0.9 0.9 rg\n"
+            b"0 0 612 40 re\n"
+            b"f\n"
+            b"BT /F1 6 Tf 200 15 Td (lOMoARcPSD|12345678) Tj ET\n"
+            b"Q\n"
+            b"Q\n"
+        )
+        result = remove_watermark(pdf_bytes)
+        reader = PdfReader(io.BytesIO(result))
+        data = reader.pages[0].get_contents().get_data()
+
+        assert b"1 1 1 rg" not in data
+        assert b"0.9 0.9 0.9 rg" not in data
+        assert b" re" not in data
+        assert b"Page content here" in data
+
+    def test_preserves_non_watermark_graphics_group(self):
+        """A q...Q group with legitimate text must NOT be removed."""
+        pdf_bytes = self._make_single_stream_pdf(
+            b"q\n"
+            b"q\n"
+            b"0.95 0.95 0.95 rg\n"
+            b"50 600 200 100 re\n"
+            b"f\n"
+            b"BT /F1 10 Tf 60 650 Td (Important highlighted note.) Tj ET\n"
+            b"Q\n"
+            b"Q\n"
+        )
+        result = remove_watermark(pdf_bytes)
+        reader = PdfReader(io.BytesIO(result))
+        data = reader.pages[0].get_contents().get_data()
+
+        assert b"Important highlighted note" in data
+        assert b"50 600 200 100 re" in data or b" re" in data
+
+    def test_mixed_group_only_removes_text(self):
+        """A q...Q group with BOTH watermark and legitimate text: only remove watermark BT...ET."""
+        pdf_bytes = self._make_single_stream_pdf(
+            b"q\n"
+            b"q\n"
+            b"0.9 0.9 0.9 rg\n"
+            b"0 0 612 50 re\n"
+            b"f\n"
+            b"BT /F1 12 Tf 50 30 Td (Important footer content.) Tj ET\n"
+            b"BT /F1 6 Tf 400 10 Td (lOMoARcPSD|99999999) Tj ET\n"
+            b"Q\n"
+            b"Q\n"
+        )
+        result = remove_watermark(pdf_bytes)
+        reader = PdfReader(io.BytesIO(result))
+        data = reader.pages[0].get_contents().get_data()
+
+        assert b"lOMoARcPSD" not in data, "Watermark text removed"
+        assert b"Important footer content" in data, "Legit text preserved"
+
+    def test_removes_top_level_watermark_group_no_outer_q(self):
+        """Watermark q...Q at stream top level (no outer q wrapper) should be removed."""
+        pdf_bytes = self._make_single_stream_pdf(
+            b"BT /F1 12 Tf 100 700 Td (Legitimate content here.) Tj ET\n"
+            b"q\n"
+            b"1 1 1 rg\n"
+            b"0 0 612 50 re\n"
+            b"f\n"
+            b"BT /F1 8 Tf 100 20 Td (Downloaded by Test User) Tj ET\n"
+            b"BT /F1 6 Tf 400 20 Td (lOMoARcPSD|12345678) Tj ET\n"
+            b"Q\n"
+        )
+        result = remove_watermark(pdf_bytes)
+        reader = PdfReader(io.BytesIO(result))
+        data = reader.pages[0].get_contents().get_data()
+
+        assert b"1 1 1 rg" not in data, "White color should be removed"
+        assert b"612 50 re" not in data, "Rectangle should be removed"
+        assert b"Downloaded" not in data, "Watermark text should be removed"
+        assert b"Legitimate content here" in data, "Content must be preserved"
+
+    def test_preserves_empty_text_block_group(self):
+        """A q...Q group with only empty BT...ET blocks should NOT be removed."""
+        pdf_bytes = self._make_single_stream_pdf(
+            b"q\n"
+            b"0.95 0.95 0.95 rg\n"
+            b"50 600 200 100 re\n"
+            b"f\n"
+            b"BT ET\n"
+            b"Q\n"
+        )
+        result = remove_watermark(pdf_bytes)
+        reader = PdfReader(io.BytesIO(result))
+        data = reader.pages[0].get_contents().get_data()
+
+        # Group should be preserved (empty text is not watermark)
+        assert b"50 600 200 100 re" in data or b" re" in data
+
+    def test_no_white_box_on_multipage_studocu_style(self):
+        """Multi-page single-stream StuDocu-style PDF should have no white artifacts."""
+        pages_data = []
+        for i in range(3):
+            pages_data.append(
+                f"q\n"
+                f"BT /F1 12 Tf 100 700 Td (Page {i+1} real content.) Tj ET\n"
+                f"q\n"
+                f"1 1 1 rg\n"
+                f"0 750 612 42 re\n"
+                f"f\n"
+                f"BT /F1 8 Tf 50 760 Td (messages.downloaded_by) Tj ET\n"
+                f"Q\n"
+                f"q\n"
+                f"0.85 0.85 0.85 rg\n"
+                f"0 0 612 30 re\n"
+                f"f\n"
+                f"BT /F1 5 Tf 250 10 Td (lOMoARcPSD|12345678) Tj ET\n"
+                f"Q\n"
+                f"Q\n"
+            )
+
+        from pypdf import PdfWriter
+        from pypdf.generic import (
+            DecodedStreamObject,
+            DictionaryObject,
+            NameObject,
+        )
+
+        writer = PdfWriter()
+        for page_data in pages_data:
+            page = writer.add_blank_page(width=612, height=792)
+            stream = DecodedStreamObject()
+            stream.set_data(page_data.encode())
+            s_ref = writer._add_object(stream)
+            page[NameObject("/Contents")] = s_ref
+            font_dict = DictionaryObject(
+                {
+                    NameObject("/Type"): NameObject("/Font"),
+                    NameObject("/Subtype"): NameObject("/Type1"),
+                    NameObject("/BaseFont"): NameObject("/Helvetica"),
+                }
+            )
+            font_ref = writer._add_object(font_dict)
+            page[NameObject("/Resources")] = DictionaryObject(
+                {
+                    NameObject("/Font"): DictionaryObject(
+                        {NameObject("/F1"): font_ref}
+                    )
+                }
+            )
+
+        buf = io.BytesIO()
+        writer.write(buf)
+
+        result = remove_watermark(buf.getvalue())
+        reader = PdfReader(io.BytesIO(result))
+
+        for i, page in enumerate(reader.pages):
+            data = page.get_contents().get_data()
+            assert b"1 1 1 rg" not in data, f"Page {i}: white rect remains"
+            assert b"0.85 0.85" not in data, f"Page {i}: gray rect remains"
+            assert f"Page {i+1} real content".encode() in data, f"Page {i}: content lost"
