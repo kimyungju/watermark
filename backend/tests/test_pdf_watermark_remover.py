@@ -816,3 +816,133 @@ class TestOutputCompression:
         # Just verify it completes without error and produces valid PDF
         reader = PdfReader(io.BytesIO(result))
         assert len(reader.pages) == 3
+
+
+class TestCoverPageDetection:
+    """Test detection and removal of platform-injected cover pages."""
+
+    def _make_pdf_with_cover(self, cover_text, body_texts, trailing_text=None):
+        """Helper: create a PDF with a cover page, body pages, and optional trailing page.
+
+        Args:
+            cover_text: text content for the cover page (platform branding)
+            body_texts: list of text strings, one per body page
+            trailing_text: optional text for a trailing cover page
+        """
+        doc = fitz.open()
+
+        # Cover page
+        page = doc.new_page()
+        page.insert_text((72, 100), cover_text, fontsize=14)
+
+        # Body pages
+        for text in body_texts:
+            page = doc.new_page()
+            page.insert_text((72, 100), text, fontsize=12)
+
+        # Optional trailing page
+        if trailing_text:
+            page = doc.new_page()
+            page.insert_text((72, 100), trailing_text, fontsize=14)
+
+        pdf_bytes = doc.tobytes()
+        doc.close()
+        return pdf_bytes
+
+    def test_detects_studocu_cover_page(self):
+        """A page with only StuDocu branding text is a cover page."""
+        from services.pdf_watermark_remover import _detect_cover_pages
+
+        pdf_bytes = self._make_pdf_with_cover(
+            "Downloaded by User (user@email.com)\nlOMoARcPSD|12345678\nStuDocu is not sponsored or endorsed by any college",
+            ["This is the actual lecture content about thermodynamics.", "More content here."],
+        )
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        cover_indices = _detect_cover_pages(reader)
+        assert 0 in cover_indices
+        assert 1 not in cover_indices
+        assert 2 not in cover_indices
+
+    def test_does_not_flag_body_pages(self):
+        """Pages with real content are not cover pages."""
+        from services.pdf_watermark_remover import _detect_cover_pages
+
+        pdf_bytes = self._make_pdf_with_cover(
+            "Downloaded by User\nlOMoARcPSD|12345678",
+            ["Lecture 1: Introduction to Computer Science\nThis course covers algorithms and data structures."],
+        )
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        cover_indices = _detect_cover_pages(reader)
+        assert 0 in cover_indices
+        assert 1 not in cover_indices
+
+    def test_detects_trailing_cover_page(self):
+        """A trailing platform page is also detected."""
+        from services.pdf_watermark_remover import _detect_cover_pages
+
+        pdf_bytes = self._make_pdf_with_cover(
+            "Downloaded by User\nlOMoARcPSD|12345678",
+            ["Real content page."],
+            trailing_text="Get the app\nStuDocu is not sponsored or endorsed",
+        )
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        cover_indices = _detect_cover_pages(reader)
+        assert 0 in cover_indices
+        assert 2 in cover_indices
+        assert 1 not in cover_indices
+
+    def test_single_page_pdf_never_stripped(self):
+        """Single-page PDFs are never stripped (early return for len <= 1)."""
+        from services.pdf_watermark_remover import _detect_cover_pages
+
+        pdf_bytes = self._make_pdf_with_cover(
+            "Downloaded by User\nlOMoARcPSD|12345678",
+            [],  # No body pages — only the cover
+        )
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        cover_indices = _detect_cover_pages(reader)
+        assert len(cover_indices) == 0
+
+    def test_all_cover_pages_multipage_returns_empty(self):
+        """If ALL pages are cover pages, keep them all (safety guard)."""
+        from services.pdf_watermark_remover import _detect_cover_pages
+
+        # Both pages are platform branding — safety guard prevents stripping all
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((72, 100), "Downloaded by User\nlOMoARcPSD|12345678", fontsize=14)
+        page = doc.new_page()
+        page.insert_text((72, 100), "Get the app\nStuDocu is not sponsored or endorsed", fontsize=14)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        cover_indices = _detect_cover_pages(reader)
+        # Safety: never strip all pages
+        assert len(cover_indices) == 0
+
+    def test_cover_pages_removed_from_output(self):
+        """End-to-end: remove_watermark strips cover pages from final output."""
+        pdf_bytes = self._make_pdf_with_cover(
+            "Downloaded by User\nlOMoARcPSD|12345678\nStuDocu is not sponsored",
+            ["Real content page 1.", "Real content page 2."],
+        )
+        result = remove_watermark(pdf_bytes)
+        reader = PdfReader(io.BytesIO(result))
+        # Cover page should be gone: 3 pages -> 2 pages
+        assert len(reader.pages) == 2
+
+    def test_page_with_mixed_content_not_stripped(self):
+        """A page with some platform text but also substantial content is kept."""
+        from services.pdf_watermark_remover import _detect_cover_pages
+
+        pdf_bytes = self._make_pdf_with_cover(
+            "Downloaded by User\nlOMoARcPSD|12345678\n"
+            "Chapter 1: Introduction\nThis chapter explores the fundamental concepts of "
+            "quantum mechanics including wave-particle duality and the uncertainty principle.",
+            ["More real content."],
+        )
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        cover_indices = _detect_cover_pages(reader)
+        # Page 0 has substantial non-platform text — should NOT be stripped
+        assert 0 not in cover_indices
