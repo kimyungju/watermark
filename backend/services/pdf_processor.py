@@ -1,35 +1,15 @@
 import os
-import re
 import shutil
 from collections import Counter
 
 import fitz  # PyMuPDF
 
+from services.constants import PLATFORM_PATTERNS, CLASSIC_WATERMARK_PATTERNS, IGNORE_COMMON_TEXT
+
 MAX_PDF_PAGES = 20
 
-# Classic watermark keywords
-WATERMARK_PATTERNS = re.compile(
-    r"\b(DRAFT|CONFIDENTIAL|SAMPLE|COPY|DO NOT DISTRIBUTE|WATERMARK|PREVIEW)\b",
-    re.IGNORECASE,
-)
-
-# Platform-specific signatures (StuDocu, Scribd, CourseHero, etc.)
-PLATFORM_PATTERNS = re.compile(
-    r"(studocu|scribd|coursehero|chegg|bartleby|"
-    r"lOMoARcPSD|"
-    r"messages\.downloaded_by|messages\.pdf_cover|messages\.studocu|"
-    r"downloaded\s+by|uploaded\s+by|"
-    r"this\s+document\s+is\s+available\s+on|"
-    r"get\s+the\s+app|"
-    r"not[\s_]sponsored[\s_]or[\s_]endorsed)",
-    re.IGNORECASE,
-)
-
-# Text that is legitimately repeated and should NOT be flagged
-IGNORE_COMMON_TEXT = re.compile(
-    r"^(\d{1,4}|[ivxlcdm]+|page\s*\d+|©.*)$",
-    re.IGNORECASE,
-)
+# Alias for backward compatibility within this file
+WATERMARK_PATTERNS = CLASSIC_WATERMARK_PATTERNS
 
 
 class PdfProcessor:

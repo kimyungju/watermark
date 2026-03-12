@@ -16,32 +16,14 @@ from pypdf.generic import (
     NumberObject,
 )
 
-# Known watermark platform patterns
-PLATFORM_PATTERNS = re.compile(
-    r"(studocu|scribd|coursehero|chegg|bartleby|"
-    r"lOMoARcPSD|"
-    r"messages\.downloaded_by|messages\.pdf_cover|messages\.studocu|"
-    r"downloaded\s+by|uploaded\s+by|"
-    r"this\s+document\s+is\s+available\s+on|"
-    r"get\s+the\s+app|"
-    r"not[\s_]sponsored[\s_]or[\s_]endorsed)",
-    re.IGNORECASE,
+from services.constants import (
+    PLATFORM_PATTERNS,
+    CLASSIC_WATERMARK_PATTERNS,
+    IGNORE_COMMON_TEXT,
 )
 
-# Classic watermark keywords
-CLASSIC_WATERMARK_PATTERNS = re.compile(
-    r"\b(DRAFT|CONFIDENTIAL|SAMPLE|COPY|DO NOT DISTRIBUTE|WATERMARK|PREVIEW)\b",
-    re.IGNORECASE,
-)
-
-# Tracking ID pattern (alphanumeric with pipes/dashes, 8+ chars)
+# Tracking ID pattern (only used in removal, not detection)
 TRACKING_ID_PATTERN = re.compile(r"^[A-Za-z0-9|_-]{8,}$")
-
-# Legitimate repeated text to ignore
-IGNORE_COMMON_TEXT = re.compile(
-    r"^(\d{1,4}|[ivxlcdm]+|page\s*\d+|©.*|\s*)$",
-    re.IGNORECASE,
-)
 
 
 def _extract_text_from_block(block_ops):
