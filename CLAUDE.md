@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Backend
 cd backend && source .venv/Scripts/activate   # Activate venv (Windows/Git Bash)
-python -m pytest tests/ -v                     # Run all tests (56 tests)
+python -m pytest tests/ -v                     # Run all tests (104 tests)
 python -m pytest tests/test_upload.py -v       # Run single test file
 python -m pytest tests/test_upload.py::test_upload_valid_pdf -v  # Run single test
 uvicorn main:app --reload                      # Dev server on :8000
@@ -35,8 +35,9 @@ Request flow: **Upload → Dispatch → Process → Poll → Download**
 - `services/job_store.py` — Thread-safe in-memory job/batch store with auto-cleanup (10 min TTL, 60s sweep)
 - `services/processor.py` — ThreadPoolExecutor(2) dispatcher. Uses `threading.Timer` (not `asyncio.create_task`) to avoid TestClient race conditions. 60s timeout per job.
 - `services/pdf_processor.py` — 5-strategy watermark detection using PyMuPDF: common text across pages, large light text, platform fingerprints (StuDocu/Scribd/CourseHero), repeated images, banner-shaped images
-- `services/pdf_watermark_remover.py` — pypdf object-level removal (no rasterization): separate content streams, annotation removal, inline BT/ET text block removal, XObject overlay removal
+- `services/pdf_watermark_remover.py` — pypdf object-level removal (no rasterization): separate content streams, annotation removal, inline BT/ET text block removal, XObject overlay removal, cover page stripping, output compression
 - `services/image_processor.py` — OpenCV watermark detection (blur diff + Canny edges) and Telea inpainting. Optional LaMa ONNX model (not included).
+- `services/constants.py` — Shared regex patterns for watermark detection (PLATFORM_PATTERNS, CLASSIC_WATERMARK_PATTERNS, IGNORE_COMMON_TEXT)
 - `services/rate_limiter.py` — Sliding window per-IP rate limiting (upload: 10/min, poll: 60/min)
 
 ### Frontend (`frontend/src/`)
