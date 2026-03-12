@@ -7,7 +7,7 @@ vi.mock("../api", () => ({
   healthCheck: vi.fn().mockResolvedValue(true),
   uploadFiles: vi.fn(),
   getBatchStatus: vi.fn(),
-  previewUrl: (id, type, page) => `/preview/${id}`,
+  previewUrl: (id) => `/preview/${id}`,
   downloadUrl: (id) => `/download/${id}`,
   downloadAllUrl: (id) => `/download-all/${id}`,
   getPreviewInfo: vi.fn().mockResolvedValue({ page_count: 1 }),
@@ -18,7 +18,7 @@ import { healthCheck, uploadFiles, getBatchStatus, getPreviewInfo } from "../api
 // Mock ResizeObserver for BeforeAfterSlider
 globalThis.ResizeObserver = class {
   constructor(cb) { this._cb = cb; }
-  observe(el) { this._cb([{ contentRect: { width: 400 } }]); }
+  observe() { this._cb([{ contentRect: { width: 400 } }]); }
   disconnect() {}
 };
 

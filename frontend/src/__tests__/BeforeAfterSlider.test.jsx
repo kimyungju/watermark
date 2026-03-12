@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { describe, it, expect } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import BeforeAfterSlider from "../components/BeforeAfterSlider";
 
 // Mock ResizeObserver (not available in jsdom)
@@ -7,7 +7,7 @@ class MockResizeObserver {
   constructor(cb) {
     this._cb = cb;
   }
-  observe(el) {
+  observe() {
     // Fire immediately with a mock entry
     this._cb([{ contentRect: { width: 400 } }]);
   }

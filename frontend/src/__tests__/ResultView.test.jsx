@@ -13,7 +13,7 @@ vi.mock("../api", () => ({
 // Mock ResizeObserver for BeforeAfterSlider
 globalThis.ResizeObserver = class {
   constructor(cb) { this._cb = cb; }
-  observe(el) { this._cb([{ contentRect: { width: 400 } }]); }
+  observe() { this._cb([{ contentRect: { width: 400 } }]); }
   disconnect() {}
 };
 
