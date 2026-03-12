@@ -168,6 +168,62 @@ def _collect_cross_page_texts(writer):
     return common
 
 
+def _detect_cover_pages(reader):
+    """Detect platform-injected cover pages that aren't part of the original document.
+
+    A cover page is one where:
+    - The majority of text (>60%) matches platform patterns
+    - There's very little non-platform text (< 50 chars of real content)
+
+    Safety: never returns all page indices (would leave empty PDF).
+    Single-page PDFs always return empty set.
+
+    Returns:
+        set of page indices to remove
+    """
+    if len(reader.pages) <= 1:
+        return set()
+
+    cover_indices = set()
+
+    for page_idx, page in enumerate(reader.pages):
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            continue
+
+        if not text.strip():
+            continue
+
+        lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        if not lines:
+            continue
+
+        platform_chars = 0
+        total_chars = 0
+
+        for line in lines:
+            total_chars += len(line)
+            if PLATFORM_PATTERNS.search(line):
+                platform_chars += len(line)
+
+        if total_chars == 0:
+            continue
+
+        platform_ratio = platform_chars / total_chars
+        non_platform_chars = total_chars - platform_chars
+
+        # Cover page: mostly platform text, very little real content
+        if platform_ratio > 0.6 and non_platform_chars < 50:
+            cover_indices.add(page_idx)
+
+    # Safety: never strip all pages
+    if len(cover_indices) >= len(reader.pages):
+        return set()
+
+    return cover_indices
+
+
 def _remove_watermark_annotations(writer):
     """Method 2: Remove watermark annotations from all pages.
 
