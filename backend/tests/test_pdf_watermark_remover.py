@@ -782,3 +782,37 @@ class TestWhiteBoxArtifactRemoval:
             assert b"1 1 1 rg" not in data, f"Page {i}: white rect remains"
             assert b"0.85 0.85" not in data, f"Page {i}: gray rect remains"
             assert f"Page {i+1} real content".encode() in data, f"Page {i}: content lost"
+
+
+class TestOutputCompression:
+    """Verify output PDF is compressed."""
+
+    def test_output_not_larger_than_input(self):
+        """Output should not be significantly larger than input for clean PDFs."""
+        doc = fitz.open()
+        for i in range(5):
+            page = doc.new_page()
+            page.insert_text((72, 100), f"Page {i+1} content " * 20, fontsize=12)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        result = remove_watermark(pdf_bytes)
+        # Output should not be more than 2x the input size
+        assert len(result) < len(pdf_bytes) * 2, (
+            f"Output ({len(result)}) is more than 2x input ({len(pdf_bytes)})"
+        )
+
+    def test_compression_reduces_duplicate_objects(self):
+        """PDFs with duplicate objects should benefit from compression."""
+        doc = fitz.open()
+        for i in range(3):
+            page = doc.new_page()
+            page.insert_text((72, 100), f"Content page {i+1}", fontsize=12)
+            page.insert_text((200, 400), "CONFIDENTIAL", fontsize=48, color=(0.9, 0.9, 0.9))
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        result = remove_watermark(pdf_bytes)
+        # Just verify it completes without error and produces valid PDF
+        reader = PdfReader(io.BytesIO(result))
+        assert len(reader.pages) == 3

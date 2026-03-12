@@ -733,6 +733,9 @@ def remove_watermark(input_pdf_bytes: bytes) -> bytes:
     _remove_watermark_streams(writer, cross_page_texts)
     _remove_inline_watermarks(writer, cross_page_texts)
 
+    # Compress output: deduplicate identical objects and remove orphans
+    writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)
+
     output = io.BytesIO()
     writer.write(output)
     return output.getvalue()
