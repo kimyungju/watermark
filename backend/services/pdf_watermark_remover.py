@@ -775,6 +775,9 @@ def remove_watermark(input_pdf_bytes: bytes) -> bytes:
         except Exception:
             return input_pdf_bytes  # Still can't read, return as-is
 
+    # Detect cover pages from original (before removal alters text)
+    cover_pages = _detect_cover_pages(reader)
+
     try:
         writer = PdfWriter(clone_from=reader)
     except Exception:
@@ -788,6 +791,12 @@ def remove_watermark(input_pdf_bytes: bytes) -> bytes:
     _remove_watermark_xobjects(writer, cross_page_texts)
     _remove_watermark_streams(writer, cross_page_texts)
     _remove_inline_watermarks(writer, cross_page_texts)
+
+    # Strip cover pages (remove in reverse order to preserve indices)
+    if cover_pages:
+        for idx in sorted(cover_pages, reverse=True):
+            if len(writer.pages) > 1:  # Safety: never leave empty PDF
+                del writer.pages[idx]
 
     # Compress output: deduplicate identical objects and remove orphans
     writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)
