@@ -2,19 +2,6 @@ import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import BeforeAfterSlider from "../components/BeforeAfterSlider";
 
-// Mock ResizeObserver (not available in jsdom)
-class MockResizeObserver {
-  constructor(cb) {
-    this._cb = cb;
-  }
-  observe() {
-    // Fire immediately with a mock entry
-    this._cb([{ contentRect: { width: 400 } }]);
-  }
-  disconnect() {}
-}
-globalThis.ResizeObserver = MockResizeObserver;
-
 describe("BeforeAfterSlider", () => {
   it("renders before and after images", () => {
     render(
@@ -66,8 +53,8 @@ describe("BeforeAfterSlider", () => {
       <BeforeAfterSlider beforeSrc="/a.png" afterSrc="/b.png" />
     );
 
-    // The before clip div should have width: 50%
-    const clipDiv = screen.getByAltText("Before").parentElement;
-    expect(clipDiv.style.width).toBe("50%");
+    // The before image should have clip-path at 50%
+    const beforeImg = screen.getByAltText("Before");
+    expect(beforeImg.style.clipPath).toBe("inset(0 50% 0 0)");
   });
 });

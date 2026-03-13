@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 export default function BeforeAfterSlider({ beforeSrc, afterSrc }) {
   const [position, setPosition] = useState(50);
-  const [containerWidth, setContainerWidth] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const containerRef = useRef(null);
   const dragging = useRef(false);
@@ -11,16 +10,6 @@ export default function BeforeAfterSlider({ beforeSrc, afterSrc }) {
   useEffect(() => {
     setLoaded(false);
   }, [beforeSrc, afterSrc]);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver((entries) => {
-      setContainerWidth(entries[0].contentRect.width);
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
 
   const updatePosition = useCallback((clientX) => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -74,18 +63,13 @@ export default function BeforeAfterSlider({ beforeSrc, afterSrc }) {
       />
 
       {/* Before image (clipped) */}
-      <div
-        className="absolute inset-0 overflow-hidden"
-        style={{ width: `${position}%` }}
-      >
-        <img
-          src={beforeSrc}
-          alt="Before"
-          className="block"
-          style={{ width: `${containerWidth}px` }}
-          draggable={false}
-        />
-      </div>
+      <img
+        src={beforeSrc}
+        alt="Before"
+        className="absolute top-0 left-0 block w-full"
+        style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}
+        draggable={false}
+      />
 
       {/* Divider line with glow */}
       <div
