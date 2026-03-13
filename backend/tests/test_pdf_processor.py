@@ -165,6 +165,83 @@ def test_detect_repeated_non_keyword_text(processor, repeated_text_pdf_path):
     assert "This document is available on MyPlatform" in texts
 
 
+def test_process_removes_watermark_text_from_output(processor):
+    """Fitz redaction should remove platform watermark text from the output PDF."""
+    path = os.path.join(tempfile.gettempdir(), "test_fitz_redact.pdf")
+    doc = fitz.open()
+    for i in range(3):
+        page = doc.new_page(width=595, height=842)
+        page.insert_text((72, 72), f"Lecture {i+1}: Data Structures and Algorithms", fontsize=12)
+        page.insert_text((72, 120), "Binary trees are fundamental data structures.", fontsize=11)
+        # StuDocu header watermark
+        page.insert_text(
+            (50, 20),
+            "Downloaded by lOMoARcPSD|12345678",
+            fontsize=8,
+            color=(0.3, 0.3, 0.3),
+        )
+        # StuDocu footer watermark
+        page.insert_text(
+            (150, 830),
+            "studocu.com - The Student Community",
+            fontsize=8,
+            color=(0.3, 0.3, 0.3),
+        )
+    doc.save(path)
+    doc.close()
+
+    output_dir = tempfile.mkdtemp()
+    result = processor.process(path, output_dir)
+    assert result["watermark_detected"] is True
+
+    # Verify watermark text is removed and legitimate content is preserved
+    out_doc = fitz.open(result["output_path"])
+    for page in out_doc:
+        text = page.get_text()
+        assert "lOMoARcPSD" not in text
+        assert "studocu" not in text.lower()
+    # Check legitimate content is preserved on first page
+    first_page_text = out_doc[0].get_text()
+    assert "Data Structures" in first_page_text
+    assert "Binary trees" in first_page_text
+    out_doc.close()
+    os.remove(path)
+
+
+def test_process_preserves_non_watermark_cross_page_text(processor):
+    """Repeated legitimate text must NOT be removed — only pattern-matched watermarks."""
+    path = os.path.join(tempfile.gettempdir(), "test_preserve_legit.pdf")
+    doc = fitz.open()
+    for i in range(3):
+        page = doc.new_page(width=595, height=842)
+        # Legitimate repeated text (appears on every page like a course header)
+        page.insert_text((72, 72), "Introduction to Computer Science", fontsize=14)
+        page.insert_text((72, 120), f"Section {i+1} notes.", fontsize=11)
+        # Platform watermark
+        page.insert_text(
+            (50, 20),
+            "Downloaded by lOMoARcPSD|99887766",
+            fontsize=8,
+            color=(0.3, 0.3, 0.3),
+        )
+    doc.save(path)
+    doc.close()
+
+    output_dir = tempfile.mkdtemp()
+    result = processor.process(path, output_dir)
+    assert result["watermark_detected"] is True
+
+    out_doc = fitz.open(result["output_path"])
+    for page in out_doc:
+        text = page.get_text()
+        # Legitimate repeated text must survive
+        assert "Introduction to Computer Science" in text
+        # Watermark must be gone
+        assert "lOMoARcPSD" not in text
+    out_doc.close()
+    os.remove(path)
+
+
 def test_process_preserves_text_selectability(processor):
     """Output PDF should preserve text selectability (no rasterization)."""
     path = os.path.join(tempfile.gettempdir(), "test_text_selectable.pdf")
