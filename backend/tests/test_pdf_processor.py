@@ -242,6 +242,43 @@ def test_process_preserves_non_watermark_cross_page_text(processor):
     os.remove(path)
 
 
+def test_process_removes_large_light_watermark(processor):
+    """Large light-colored text should be removed even without keyword match."""
+    path = os.path.join(tempfile.gettempdir(), "test_large_light.pdf")
+    doc = fitz.open()
+    for i in range(2):
+        page = doc.new_page(width=595, height=842)
+        # Legitimate content at normal size
+        page.insert_text((72, 72), f"Chapter {i+1}: Important Study Notes", fontsize=12)
+        page.insert_text((72, 120), "This paragraph contains real content.", fontsize=11)
+        # Large light-colored text — NOT a keyword in CLASSIC_WATERMARK_PATTERNS
+        page.insert_text(
+            (100, 400),
+            "Property of ACME Corp",
+            fontsize=60,
+            color=(0.85, 0.85, 0.85),
+        )
+    doc.save(path)
+    doc.close()
+
+    output_dir = tempfile.mkdtemp()
+    result = processor.process(path, output_dir)
+    assert result["watermark_detected"] is True
+
+    # Verify the large light text is removed
+    out_doc = fitz.open(result["output_path"])
+    for page in out_doc:
+        text = page.get_text()
+        assert "ACME Corp" not in text
+        assert "Property of" not in text
+    # Verify legitimate content is preserved
+    first_page_text = out_doc[0].get_text()
+    assert "Important Study Notes" in first_page_text
+    assert "real content" in first_page_text
+    out_doc.close()
+    os.remove(path)
+
+
 def test_process_preserves_text_selectability(processor):
     """Output PDF should preserve text selectability (no rasterization)."""
     path = os.path.join(tempfile.gettempdir(), "test_text_selectable.pdf")
