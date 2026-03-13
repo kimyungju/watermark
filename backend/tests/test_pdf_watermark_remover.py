@@ -932,6 +932,47 @@ class TestCoverPageDetection:
         # Cover page should be gone: 3 pages -> 2 pages
         assert len(reader.pages) == 2
 
+    def test_image_heavy_page_not_stripped(self):
+        """Pages with large images should never be flagged as cover pages,
+        even if their only text is watermark text."""
+        from services.pdf_watermark_remover import _detect_cover_pages
+
+        # Create a 3-page PDF:
+        # Page 0: StuDocu cover (text only, platform patterns)
+        # Page 1: Content with large image + watermark text only
+        # Page 2: Content with large image + watermark text only
+        doc = fitz.open()
+
+        # Page 0: cover page
+        p0 = doc.new_page()
+        p0.insert_text((72, 100), "studocu.com", fontsize=20)
+        p0.insert_text((72, 140), "messages.downloaded_by", fontsize=8)
+        p0.insert_text((72, 160), "lOMoARcPSD|12345678", fontsize=1)
+
+        # Page 1: image content + watermark text
+        p1 = doc.new_page()
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 400, 500), 0)
+        pix.set_rect(fitz.IRect(0, 0, 400, 500), (200, 200, 200))
+        p1.insert_image(fitz.Rect(0, 0, 400, 500), pixmap=pix)
+        p1.insert_text((72, 550), "messages.downloaded_by", fontsize=8, color=(0.3, 0.3, 0.3))
+
+        # Page 2: same as page 1
+        p2 = doc.new_page()
+        p2.insert_image(fitz.Rect(0, 0, 400, 500), pixmap=pix)
+        p2.insert_text((72, 550), "messages.downloaded_by", fontsize=8, color=(0.3, 0.3, 0.3))
+
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        result = _detect_cover_pages(reader)
+
+        # Page 0 should be flagged as cover (text-only, all platform)
+        # Pages 1-2 should NOT be flagged (they have large images)
+        assert 0 in result, "Page 0 (cover) should be detected"
+        assert 1 not in result, "Page 1 (image content) should NOT be stripped"
+        assert 2 not in result, "Page 2 (image content) should NOT be stripped"
+
     def test_page_with_mixed_content_not_stripped(self):
         """A page with some platform text but also substantial content is kept."""
         from services.pdf_watermark_remover import _detect_cover_pages

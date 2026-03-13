@@ -1,4 +1,3 @@
-import io
 import os
 import shutil
 from collections import Counter
@@ -162,74 +161,6 @@ class PdfProcessor:
 
         return unique
 
-    def _remove_text_watermarks_fitz(self, input_bytes: bytes, watermarks: list[dict]) -> bytes:
-        """Remove pattern-matched and large light-colored text watermarks using fitz redaction.
-
-        Pass 1: Redacts text matching PLATFORM_PATTERNS or CLASSIC_WATERMARK_PATTERNS.
-        Pass 2: Redacts large (size > 24) light-colored (RGB > 150 each) text that
-        may not match any keyword pattern but is visually a watermark.
-        """
-        # Filter to text watermarks matching known patterns
-        texts_to_redact = set()
-        for w in watermarks:
-            if w.get("type") != "text":
-                continue
-            text = w.get("text", "")
-            if PLATFORM_PATTERNS.search(text) or CLASSIC_WATERMARK_PATTERNS.search(text):
-                texts_to_redact.add(text)
-
-        doc = fitz.open(stream=input_bytes, filetype="pdf")
-        redacted_any = False
-
-        # Pass 1: Pattern-matched text redaction
-        if texts_to_redact:
-            for page in doc:
-                page_had_redactions = False
-                for text in texts_to_redact:
-                    instances = page.search_for(text)
-                    for inst in instances:
-                        page.add_redact_annot(inst, fill=(1, 1, 1))
-                        page_had_redactions = True
-                if page_had_redactions:
-                    page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
-                    redacted_any = True
-
-        # Pass 2: Large light-colored text redaction (catches non-keyword watermarks)
-        for page in doc:
-            page_had_redactions = False
-            blocks = page.get_text("dict")["blocks"]
-            for block in blocks:
-                if "lines" not in block:
-                    continue
-                for line in block["lines"]:
-                    for span in line["spans"]:
-                        text = span["text"].strip()
-                        if not text:
-                            continue
-                        size = span.get("size", 12)
-                        color = span.get("color", 0)
-                        if size > 24:
-                            r = (color >> 16) & 0xFF
-                            g = (color >> 8) & 0xFF
-                            b = color & 0xFF
-                            if r > 150 and g > 150 and b > 150:
-                                instances = page.search_for(text)
-                                for inst in instances:
-                                    page.add_redact_annot(inst, fill=(1, 1, 1))
-                                    page_had_redactions = True
-            if page_had_redactions:
-                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
-                redacted_any = True
-
-        if not redacted_any:
-            doc.close()
-            return input_bytes
-
-        buf = io.BytesIO()
-        doc.save(buf)
-        doc.close()
-        return buf.getvalue()
-
     def process(self, input_path: str, output_dir: str) -> dict:
         """Process a PDF file. Returns dict with output_path and watermark_detected."""
         doc = fitz.open(input_path)
@@ -253,10 +184,7 @@ class PdfProcessor:
         with open(input_path, "rb") as f:
             pdf_bytes = f.read()
 
-        # Phase 1: fitz redaction for pattern-matched text watermarks
-        pdf_bytes = self._remove_text_watermarks_fitz(pdf_bytes, watermarks)
-
-        # Phase 2: pypdf structural removal (annotations, XObjects, cross-page heuristics, cover pages)
+        # pypdf object-level removal (no rasterization, no white boxes)
         from services.pdf_watermark_remover import remove_watermark
 
         cleaned_bytes = remove_watermark(pdf_bytes)

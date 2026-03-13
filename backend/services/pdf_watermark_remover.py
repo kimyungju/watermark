@@ -172,36 +172,73 @@ def _detect_cover_pages(reader):
     """Detect platform-injected cover pages that aren't part of the original document.
 
     A cover page is one where:
-    - The majority of text (>60%) matches platform patterns
-    - There's very little non-platform text (< 50 chars of real content)
+    - It contains a StuDocu/CourseHero-specific cover page marker, OR
+    - The majority of text (>60%) matches platform patterns AND there's very
+      little non-platform text (<50 chars)
+
+    Pages with large image XObjects (>200x200) are never flagged — they are
+    content pages whose text happens to be watermark-only (scanned documents).
 
     Safety: never returns all page indices (would leave empty PDF).
     Single-page PDFs always return empty set.
-
-    Returns:
-        set of page indices to remove
     """
     if len(reader.pages) <= 1:
         return set()
 
+    # Specific markers that identify platform-generated cover pages
+    cover_markers = [
+        "pdf_cover_qr_code_label",
+        "studocu_not_sponsored",
+        "coursehero_not_sponsored",
+    ]
+
     cover_indices = set()
 
     for page_idx, page in enumerate(reader.pages):
+        # Check for large image XObjects — if present, this is a content page
+        has_large_images = False
+        if "/Resources" in page:
+            try:
+                resources = page["/Resources"].get_object()
+                if "/XObject" in resources:
+                    xobjects = resources["/XObject"].get_object()
+                    for name in xobjects:
+                        try:
+                            xobj = xobjects[name].get_object()
+                            if str(xobj.get("/Subtype", "")) == "/Image":
+                                w = int(xobj.get("/Width", 0))
+                                h = int(xobj.get("/Height", 0))
+                                if w > 200 and h > 200:
+                                    has_large_images = True
+                                    break
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
+        if has_large_images:
+            continue  # Content page with images — never strip
+
         try:
-            text = page.extract_text() or ""
+            text = (page.extract_text() or "").lower()
         except Exception:
             continue
 
         if not text.strip():
             continue
 
+        # Check for specific cover page markers
+        if any(marker in text for marker in cover_markers):
+            cover_indices.add(page_idx)
+            continue
+
+        # Fallback: text-ratio heuristic
         lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
         if not lines:
             continue
 
         platform_chars = 0
         total_chars = 0
-
         for line in lines:
             total_chars += len(line)
             if PLATFORM_PATTERNS.search(line):
@@ -213,7 +250,6 @@ def _detect_cover_pages(reader):
         platform_ratio = platform_chars / total_chars
         non_platform_chars = total_chars - platform_chars
 
-        # Cover page: mostly platform text, very little real content
         if platform_ratio > 0.6 and non_platform_chars < 50:
             cover_indices.add(page_idx)
 

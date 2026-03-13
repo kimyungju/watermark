@@ -166,7 +166,7 @@ def test_detect_repeated_non_keyword_text(processor, repeated_text_pdf_path):
 
 
 def test_process_removes_watermark_text_from_output(processor):
-    """Fitz redaction should remove platform watermark text from the output PDF."""
+    """Platform watermark text should be removed from the output PDF."""
     path = os.path.join(tempfile.gettempdir(), "test_fitz_redact.pdf")
     doc = fitz.open()
     for i in range(3):
@@ -277,6 +277,60 @@ def test_process_removes_large_light_watermark(processor):
     assert "real content" in first_page_text
     out_doc.close()
     os.remove(path)
+
+
+def test_no_white_boxes_in_output(processor):
+    """Verify watermark removal doesn't create white box artifacts.
+
+    Simulates a StuDocu-style PDF with:
+    - Content as images
+    - Watermark text appended as separate content stream
+    Verifies the output has content images but no watermark text.
+    """
+    # Create a 2-page PDF with image content + watermark text overlay
+    doc = fitz.open()
+    for i in range(2):
+        page = doc.new_page()
+        # Main content: large image
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 400, 500), 0)
+        pix.set_rect(fitz.IRect(0, 0, 400, 500), (100, 100, 100))
+        page.insert_image(fitz.Rect(20, 20, 420, 520), pixmap=pix)
+        # Watermark text (what StuDocu appends)
+        page.insert_text((72, 560), "messages.downloaded_by", fontsize=8, color=(0.3, 0.3, 0.3))
+        page.insert_text((72, 575), "lOMoARcPSD|12345678", fontsize=1)
+
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    output_dir = tempfile.mkdtemp()
+    input_path = os.path.join(output_dir, "test.pdf")
+    with open(input_path, "wb") as f:
+        f.write(pdf_bytes)
+
+    result = processor.process(input_path, output_dir)
+    assert result["watermark_detected"] is True
+
+    # Check output: should have images, no watermark text, no white boxes
+    out_doc = fitz.open(result["output_path"])
+    assert len(out_doc) == 2  # Both pages preserved
+
+    for pn in range(len(out_doc)):
+        page = out_doc[pn]
+        text = page.get_text().strip()
+        # Watermark text should be removed
+        assert "downloaded_by" not in text
+        assert "lOMoARcPSD" not in text
+        # Content images should still exist
+        imgs = page.get_image_info()
+        assert len(imgs) >= 1, f"Page {pn} should still have content images"
+        # Check for white boxes: sample the center of where content image should be
+        pixmap = page.get_pixmap(dpi=72)
+        cx, cy = pixmap.width // 4, pixmap.height // 4
+        pixel = pixmap.pixel(cx, cy)
+        # Should NOT be white (255,255,255) — should show the gray content image
+        assert pixel != (255, 255, 255), f"Page {pn} has white box at content area"
+
+    out_doc.close()
 
 
 def test_process_preserves_text_selectability(processor):
