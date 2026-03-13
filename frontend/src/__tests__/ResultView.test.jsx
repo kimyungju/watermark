@@ -114,4 +114,24 @@ describe("ResultView", () => {
     await act(async () => {});
     expect(screen.getByText("1 of 2 processed")).toBeInTheDocument();
   });
+
+  it("shows page navigation for multi-page PDFs", async () => {
+    const { getPreviewInfo } = await import("../api");
+    getPreviewInfo.mockResolvedValue({ page_count: 3 });
+
+    render(<ResultView jobs={[doneJob]} batchId="b1" onReset={vi.fn()} />);
+
+    expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument();
+
+    const nextBtn = screen.getByText("Next");
+    expect(nextBtn).toBeInTheDocument();
+    expect(nextBtn).not.toBeDisabled();
+
+    const prevBtn = screen.getByText("Prev");
+    expect(prevBtn).toBeInTheDocument();
+    expect(prevBtn).toBeDisabled();
+
+    // Reset mock to default
+    getPreviewInfo.mockResolvedValue({ page_count: 1 });
+  });
 });

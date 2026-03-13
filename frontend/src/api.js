@@ -45,9 +45,17 @@ export function previewUrl(jobId, type = "processed", page = 0) {
 }
 
 export async function getPreviewInfo(jobId) {
-  const res = await fetch(`${API_BASE}/preview/${jobId}/info`);
-  if (!res.ok) return { page_count: 1 };
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}/preview/${jobId}/info`);
+    if (!res.ok) {
+      console.warn(`Preview info failed for ${jobId}: ${res.status}`);
+      return { page_count: 1 };
+    }
+    return res.json();
+  } catch (err) {
+    console.warn(`Preview info error for ${jobId}:`, err);
+    return { page_count: 1 };
+  }
 }
 
 export function downloadUrl(jobId) {
