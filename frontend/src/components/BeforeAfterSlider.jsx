@@ -81,7 +81,7 @@ export default function BeforeAfterSlider({ beforeSrc, afterSrc }) {
         <img
           src={beforeSrc}
           alt="Before"
-          className="block h-full object-cover object-left"
+          className="block"
           style={{ width: `${containerWidth}px` }}
           draggable={false}
         />
