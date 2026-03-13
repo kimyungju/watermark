@@ -7,7 +7,6 @@ vi.mock("../api", () => ({
   previewUrl: (id, type, page) => `/api/preview/${id}?type=${type}&page=${page}`,
   downloadUrl: (id) => `/api/download/${id}`,
   downloadAllUrl: (id) => `/api/download-all/${id}`,
-  getPreviewInfo: vi.fn().mockResolvedValue({ page_count: 1 }),
 }));
 
 // Mock ResizeObserver for BeforeAfterSlider
@@ -116,12 +115,11 @@ describe("ResultView", () => {
   });
 
   it("shows page navigation for multi-page PDFs", async () => {
-    const { getPreviewInfo } = await import("../api");
-    getPreviewInfo.mockResolvedValue({ page_count: 3 });
+    const multiPageJob = { ...doneJob, page_count: 3 };
 
-    render(<ResultView jobs={[doneJob]} batchId="b1" onReset={vi.fn()} />);
+    render(<ResultView jobs={[multiPageJob]} batchId="b1" onReset={vi.fn()} />);
 
-    expect(await screen.findByText("Page 1 of 3")).toBeInTheDocument();
+    expect(screen.getByText("Page 1 of 3")).toBeInTheDocument();
 
     const nextBtn = screen.getByText("Next");
     expect(nextBtn).toBeInTheDocument();
@@ -130,8 +128,5 @@ describe("ResultView", () => {
     const prevBtn = screen.getByText("Prev");
     expect(prevBtn).toBeInTheDocument();
     expect(prevBtn).toBeDisabled();
-
-    // Reset mock to default
-    getPreviewInfo.mockResolvedValue({ page_count: 1 });
   });
 });

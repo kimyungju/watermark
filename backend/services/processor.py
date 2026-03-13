@@ -57,11 +57,23 @@ def _process_job(store: JobStore, job_id: str) -> None:
         else:
             raise ValueError(f"Unsupported file type: {ext}")
 
+        # Count pages for PDF files so frontend can show navigation
+        page_count = 1
+        if ext in PDF_EXTENSIONS:
+            try:
+                import fitz
+                doc = fitz.open(result["output_path"])
+                page_count = len(doc)
+                doc.close()
+            except Exception:
+                pass
+
         store.update_job(
             job_id,
             status="done",
             output_path=result["output_path"],
             watermark_detected=result["watermark_detected"],
+            page_count=page_count,
         )
 
     except Exception as e:

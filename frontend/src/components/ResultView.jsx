@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import BeforeAfterSlider from "./BeforeAfterSlider";
-import { previewUrl, downloadUrl, downloadAllUrl, getPreviewInfo } from "../api";
+import { previewUrl, downloadUrl, downloadAllUrl } from "../api";
 
 function DownloadIcon() {
   return (
@@ -50,11 +50,7 @@ function PageNav({ page, pageCount, onPageChange }) {
 
 function JobCard({ job, index }) {
   const [page, setPage] = useState(0);
-  const [pageCount, setPageCount] = useState(1);
-
-  useEffect(() => {
-    getPreviewInfo(job.id).then((info) => setPageCount(info.page_count));
-  }, [job.id]);
+  const pageCount = job.page_count || 1;
 
   return (
     <div

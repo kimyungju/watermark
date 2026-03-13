@@ -25,6 +25,7 @@ def _job_to_response(job: dict) -> dict:
         resp["watermark_detected"] = job.get("watermark_detected", True)
         resp["preview_url"] = f"/api/preview/{job['id']}"
         resp["original_url"] = f"/api/preview/{job['id']}?type=original"
+        resp["page_count"] = job.get("page_count", 1)
     if job["status"] == "error":
         resp["error"] = job.get("error", "Processing failed")
     return resp
