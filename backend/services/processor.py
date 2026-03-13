@@ -74,6 +74,7 @@ def _process_job(store: JobStore, job_id: str) -> None:
             output_path=result["output_path"],
             watermark_detected=result["watermark_detected"],
             page_count=page_count,
+            removed_pages=result.get("removed_pages", []),
         )
 
     except Exception as e:

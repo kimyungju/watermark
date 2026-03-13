@@ -10,6 +10,22 @@ from services.job_store import JobStore
 router = APIRouter(prefix="/api")
 
 
+def _map_to_original_page(processed_page: int, removed_indices: list[int]) -> int:
+    """Map processed page index to original, skipping removed cover pages.
+
+    When cover pages are stripped from the processed PDF, page indices shift.
+    E.g., if page 0 was removed, processed page 0 = original page 1.
+    If removed_indices is empty, returns processed_page unchanged.
+    """
+    original = processed_page
+    for removed in sorted(removed_indices):
+        if removed <= original:
+            original += 1
+        else:
+            break
+    return original
+
+
 def get_job_store(request: Request) -> JobStore:
     return request.app.state.job_store
 
@@ -59,6 +75,8 @@ async def get_preview(
 
     if type == "original":
         path = job.get("input_path")
+        removed_pages = job.get("removed_pages", [])
+        page = _map_to_original_page(page, removed_pages)
     else:
         path = job.get("output_path")
 

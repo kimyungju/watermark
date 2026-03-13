@@ -1,3 +1,4 @@
+import io
 import os
 import shutil
 from collections import Counter
@@ -179,17 +180,23 @@ class PdfProcessor:
 
         if not watermarks:
             shutil.copy2(input_path, output_path)
-            return {"output_path": output_path, "watermark_detected": False}
+            return {"output_path": output_path, "watermark_detected": False, "removed_pages": []}
 
         with open(input_path, "rb") as f:
             pdf_bytes = f.read()
 
-        # pypdf object-level removal (no rasterization, no white boxes)
-        from services.pdf_watermark_remover import remove_watermark
+        # Detect cover pages on original before removal modifies anything
+        from pypdf import PdfReader
+        from services.pdf_watermark_remover import remove_watermark, _detect_cover_pages
 
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        cover_pages = _detect_cover_pages(reader)
+        removed_pages = sorted(cover_pages)
+
+        # pypdf object-level removal (no rasterization, no white boxes)
         cleaned_bytes = remove_watermark(pdf_bytes)
 
         with open(output_path, "wb") as f:
             f.write(cleaned_bytes)
 
-        return {"output_path": output_path, "watermark_detected": True}
+        return {"output_path": output_path, "watermark_detected": True, "removed_pages": removed_pages}
