@@ -82,9 +82,16 @@ def _should_remove_block(text, color, font_size, cross_page_texts):
     if PLATFORM_PATTERNS.search(text):
         return True
 
-    # Classic watermark keywords — always remove
+    # Classic watermark keywords — only remove when accompanied by a visual watermark signal
+    # (large font, light color, or cross-page recurrence). Bare keyword match is too broad:
+    # "copy", "sample", "preview" are common in legitimate code/docs.
     if CLASSIC_WATERMARK_PATTERNS.search(text):
-        return True
+        if _is_light_color(color):
+            return True
+        if font_size is not None and font_size > 24:
+            return True
+        if cross_page_texts and text in cross_page_texts:
+            return True
 
     # Tracking IDs: very small font, alphanumeric, on every page
     if (
@@ -185,11 +192,15 @@ def _detect_cover_pages(reader):
     if len(reader.pages) <= 1:
         return set()
 
-    # Specific markers that identify platform-generated cover pages
+    # Specific markers that identify platform-generated cover pages.
+    # Includes both internal stream identifiers and rendered text phrases.
     cover_markers = [
         "pdf_cover_qr_code_label",
         "studocu_not_sponsored",
         "coursehero_not_sponsored",
+        "studocu is not sponsored",       # rendered text variant (spaces, not underscores)
+        "scan to open on studocu",        # QR code label on StuDocu cover pages
+        "coursehero is not sponsored",    # rendered text variant for CourseHero
     ]
 
     cover_indices = set()
@@ -250,7 +261,10 @@ def _detect_cover_pages(reader):
         platform_ratio = platform_chars / total_chars
         non_platform_chars = total_chars - platform_chars
 
-        if platform_ratio > 0.6 and non_platform_chars < 50:
+        # Threshold calibrated from real StuDocu/CourseHero PDFs:
+        # cover pages have ~58–60% platform text + ~150 chars of document title.
+        # Content pages have <1% platform text and thousands of content chars.
+        if platform_ratio > 0.5 and non_platform_chars < 300:
             cover_indices.add(page_idx)
 
     # Safety: never strip all pages
