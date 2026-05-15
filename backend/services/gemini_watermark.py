@@ -91,6 +91,21 @@ def locate(img: np.ndarray, variants: list, alpha: np.ndarray, search_pad: int =
     return (bx, by, bw, bh), float(max_val)
 
 
+def residual_inpaint(
+    region: np.ndarray,
+    alpha: np.ndarray,
+    low: float = 0.15,
+    high: float = 0.85,
+) -> np.ndarray:
+    """Inpaint the thin band where alpha is mid-strength — the area most
+    sensitive to recompression error in the reverse-alpha estimate."""
+    a = cv2.resize(alpha, (region.shape[1], region.shape[0]))
+    mask = ((a >= low) & (a <= high)).astype(np.uint8) * 255
+    if mask.max() == 0:
+        return region
+    return cv2.inpaint(region, mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+
+
 class GeminiWatermarkRemover:
     def __init__(self, asset_dir: str):
         self.profile = load_profile(asset_dir)

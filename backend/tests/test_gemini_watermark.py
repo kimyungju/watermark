@@ -1,9 +1,10 @@
 import os
+import tempfile
 
 import cv2
 import numpy as np
 
-from services.gemini_watermark import GeminiWatermarkRemover, load_profile, locate, reverse_alpha
+from services.gemini_watermark import GeminiWatermarkRemover, load_profile, locate, residual_inpaint, reverse_alpha
 
 ASSET_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "gemini")
 
@@ -111,3 +112,26 @@ def test_locate_discriminates_textured_background():
     wm[y0:y0 + 48, x0:x0 + 48] = (a * 255 + (1 - a) * base).astype(np.uint8)
     _, conf_wm = locate(wm, [variant], alpha, search_pad=12)
     assert conf_wm >= 0.45  # same background, logo present -> must trigger
+
+
+def test_residual_inpaint_reduces_max_error_after_jpeg_roundtrip():
+    h, w = 64, 64
+    rng = np.random.default_rng(1)
+    original = rng.integers(40, 180, size=(h, w, 3)).astype(np.uint8)
+    yy = np.linspace(0.0, 0.85, h, dtype=np.float32)
+    alpha = np.tile(yy[:, None], (1, w))
+    a = alpha[..., None]
+    wm = (a * 255 + (1 - a) * original).astype(np.uint8)
+
+    # JPEG round-trip degrades the perfect-inverse assumption.
+    p = os.path.join(tempfile.gettempdir(), "gem_rt.jpg")
+    cv2.imwrite(p, wm, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    wm_rt = cv2.imread(p).astype(np.float32)
+
+    recovered = reverse_alpha(wm_rt, alpha)
+    cleaned = residual_inpaint(recovered, alpha, low=0.15, high=0.85)
+
+    err_before = np.abs(recovered.astype(int) - original.astype(int)).max()
+    err_after = np.abs(cleaned.astype(int) - original.astype(int)).max()
+    assert cleaned.shape == original.shape
+    assert err_after <= err_before
