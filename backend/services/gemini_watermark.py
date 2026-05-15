@@ -19,7 +19,7 @@ PROFILE_NAME = "gemini_profile.json"
 
 def load_profile(asset_dir: str) -> dict:
     """Load geometry profile and (if present) the calibrated alpha map."""
-    with open(os.path.join(asset_dir, PROFILE_NAME)) as f:
+    with open(os.path.join(asset_dir, PROFILE_NAME), encoding="utf-8") as f:
         profile = json.load(f)
 
     alpha_path = os.path.join(asset_dir, ALPHA_MAP_NAME)

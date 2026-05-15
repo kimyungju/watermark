@@ -1,4 +1,3 @@
-import json
 import os
 
 from services.gemini_watermark import GeminiWatermarkRemover, load_profile
