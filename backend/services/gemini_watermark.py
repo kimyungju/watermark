@@ -50,10 +50,11 @@ def reverse_alpha(
 
 def _select_variant(img_shape, variants):
     max_dim = max(img_shape[0], img_shape[1])
-    for v in sorted(variants, key=lambda x: x["max_dim_lt"]):
+    sorted_v = sorted(variants, key=lambda x: x["max_dim_lt"])
+    for v in sorted_v:
         if max_dim < v["max_dim_lt"]:
             return v
-    return variants[-1]
+    return sorted_v[-1]  # largest bucket; must index the SORTED list
 
 
 def locate(img: np.ndarray, variants: list, alpha: np.ndarray, search_pad: int = 12):
