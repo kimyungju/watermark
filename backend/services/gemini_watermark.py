@@ -48,6 +48,48 @@ def reverse_alpha(
     return np.clip(original, 0.0, 255.0).astype(np.uint8)
 
 
+def _select_variant(img_shape, variants):
+    max_dim = max(img_shape[0], img_shape[1])
+    for v in sorted(variants, key=lambda x: x["max_dim_lt"]):
+        if max_dim < v["max_dim_lt"]:
+            return v
+    return variants[-1]
+
+
+def locate(img: np.ndarray, variants: list, alpha: np.ndarray, search_pad: int = 12):
+    """Return (box=(x,y,w,h), confidence). Confidence is the max NCC of the
+    alpha template against the local grayscale around the expected box."""
+    h, w = img.shape[:2]
+    variant = _select_variant(img.shape, variants)
+    mr, mb, bw, bh = variant["box"]
+
+    px = max(0, w - mr - bw)
+    py = max(0, h - mb - bh)
+    sx0 = max(0, px - search_pad)
+    sy0 = max(0, py - search_pad)
+    sx1 = min(w, px + bw + search_pad)
+    sy1 = min(h, py + bh + search_pad)
+
+    # NCC the alpha template directly against the float grayscale crop.
+    # TM_CCOEFF_NORMED subtracts each window's mean and normalizes, so the
+    # template's absolute scale is irrelevant and a roughly-flat background
+    # cancels out — the logo's alpha pattern dominates the local variance.
+    # (A medianBlur high-pass fails here: a small kernel sits entirely inside
+    # a tens-of-px logo, giving ~0 interior response and ~0 correlation.)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    search = gray[sy0:sy1, sx0:sx1]
+
+    template = cv2.resize(alpha, (bw, bh)).astype(np.float32)
+    if search.shape[0] < bh or search.shape[1] < bw:
+        return (px, py, bw, bh), 0.0
+
+    res = cv2.matchTemplate(search, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+    bx = sx0 + max_loc[0]
+    by = sy0 + max_loc[1]
+    return (bx, by, bw, bh), float(max_val)
+
+
 class GeminiWatermarkRemover:
     def __init__(self, asset_dir: str):
         self.profile = load_profile(asset_dir)

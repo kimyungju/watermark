@@ -1,8 +1,9 @@
 import os
 
+import cv2
 import numpy as np
 
-from services.gemini_watermark import GeminiWatermarkRemover, load_profile, reverse_alpha
+from services.gemini_watermark import GeminiWatermarkRemover, load_profile, locate, reverse_alpha
 
 ASSET_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "gemini")
 
@@ -58,3 +59,55 @@ def test_reverse_alpha_handles_saturated_alpha_without_nan():
 
     assert np.isfinite(recovered).all()
     assert recovered.min() >= 0 and recovered.max() <= 255
+
+
+def _star_alpha(size):
+    a = np.zeros((size, size), np.float32)
+    cv2.circle(a, (size // 2, size // 2), size // 3, 1.0, -1)
+    return cv2.GaussianBlur(a, (5, 5), 0) * 0.7
+
+
+def test_locate_finds_bottom_right_box_on_composite():
+    img = np.full((600, 800, 3), 90, np.uint8)
+    alpha = _star_alpha(48)
+    x0, y0 = 800 - 32 - 48, 600 - 32 - 48
+    region = img[y0:y0 + 48, x0:x0 + 48].astype(np.float32)
+    a = alpha[..., None]
+    img[y0:y0 + 48, x0:x0 + 48] = (a * 255 + (1 - a) * region).astype(np.uint8)
+
+    variant = {"max_dim_lt": 1024, "box": [32, 32, 48, 48]}
+    box, confidence = locate(img, [variant], alpha, search_pad=12)
+
+    bx, by, bw, bh = box
+    assert abs(bx - x0) <= 12 and abs(by - y0) <= 12
+    assert (bw, bh) == (48, 48)
+    assert confidence >= 0.45
+
+
+def test_locate_low_confidence_on_clean_image():
+    img = np.full((600, 800, 3), 90, np.uint8)
+    alpha = _star_alpha(48)
+    variant = {"max_dim_lt": 1024, "box": [32, 32, 48, 48]}
+    _, confidence = locate(img, [variant], alpha, search_pad=12)
+    assert confidence < 0.45
+
+
+def test_locate_discriminates_textured_background():
+    """A busy photo-like background must NOT trip the Gemini path, but the
+    same background WITH the watermark must. If the no-watermark case here
+    exceeds 0.45, raise confidence_threshold in gemini_profile.json."""
+    variant = {"max_dim_lt": 1024, "box": [32, 32, 48, 48]}
+    alpha = _star_alpha(48)
+    rng = np.random.default_rng(7)
+    textured = rng.integers(50, 200, size=(600, 800, 3)).astype(np.uint8)
+
+    _, conf_clean = locate(textured.copy(), [variant], alpha, search_pad=12)
+    assert conf_clean < 0.45  # textured but no logo -> must not trigger
+
+    wm = textured.copy()
+    x0, y0 = 800 - 32 - 48, 600 - 32 - 48
+    base = wm[y0:y0 + 48, x0:x0 + 48].astype(np.float32)
+    a = alpha[..., None]
+    wm[y0:y0 + 48, x0:x0 + 48] = (a * 255 + (1 - a) * base).astype(np.uint8)
+    _, conf_wm = locate(wm, [variant], alpha, search_pad=12)
+    assert conf_wm >= 0.45  # same background, logo present -> must trigger
