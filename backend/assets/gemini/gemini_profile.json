@@ -1,0 +1,10 @@
+{
+  "logo_color": [255, 255, 255],
+  "alpha_clamp": 0.95,
+  "search_pad": 12,
+  "confidence_threshold": 0.45,
+  "variants": [
+    { "max_dim_lt": 1024, "box": [32, 32, 48, 48] },
+    { "max_dim_lt": 100000, "box": [64, 64, 96, 96] }
+  ]
+}
