@@ -32,6 +32,22 @@ def load_profile(asset_dir: str) -> dict:
     return profile
 
 
+def reverse_alpha(
+    watermarked: np.ndarray,
+    alpha: np.ndarray,
+    logo_color: float = 255.0,
+    alpha_clamp: float = 0.95,
+) -> np.ndarray:
+    """Invert watermarked = a*logo + (1-a)*original to recover original.
+
+    watermarked: float32 HxWx3. alpha: float32 HxW in [0,1).
+    Alpha is clamped to alpha_clamp so the (1-a) denominator stays bounded.
+    """
+    a = np.clip(alpha, 0.0, alpha_clamp).astype(np.float32)[..., None]
+    original = (watermarked - a * logo_color) / (1.0 - a)
+    return np.clip(original, 0.0, 255.0).astype(np.uint8)
+
+
 class GeminiWatermarkRemover:
     def __init__(self, asset_dir: str):
         self.profile = load_profile(asset_dir)
