@@ -141,3 +141,56 @@ def test_residual_inpaint_reduces_max_error_after_jpeg_roundtrip():
     # strict <: passes only if inpaint actually runs (a broken no-op would
     # give err_after == err_before). Empirical gap here is large (>100).
     assert err_after < err_before
+
+
+def _make_remover_with_alpha(tmp_path, size, alpha):
+    import json
+    import shutil
+    d = str(tmp_path)
+    shutil.copy(os.path.join(ASSET_DIR, "gemini_profile.json"),
+                os.path.join(d, "gemini_profile.json"))
+    cv2.imwrite(os.path.join(d, "gemini_alpha_map.png"),
+                (alpha * 255).astype(np.uint8))
+    return GeminiWatermarkRemover(d)
+
+
+def test_remove_recovers_composited_watermark(tmp_path):
+    alpha = _star_alpha(48)
+    r = _make_remover_with_alpha(tmp_path, 48, alpha)
+    img = np.full((600, 800, 3), 90, np.uint8)
+    x0, y0 = 800 - 32 - 48, 600 - 32 - 48
+    base = img[y0:y0 + 48, x0:x0 + 48].astype(np.float32)
+    a = alpha[..., None]
+    img[y0:y0 + 48, x0:x0 + 48] = (a * 255 + (1 - a) * base).astype(np.uint8)
+
+    out, removed = r.remove(img)
+    assert removed is True
+    patch_err = np.abs(
+        out[y0:y0 + 48, x0:x0 + 48].astype(int) - 90
+    ).max()
+    assert patch_err <= 12  # recovered close to flat background
+
+
+def test_remove_skips_clean_image(tmp_path):
+    alpha = _star_alpha(48)
+    r = _make_remover_with_alpha(tmp_path, 48, alpha)
+    img = np.full((600, 800, 3), 90, np.uint8)
+    out, removed = r.remove(img)
+    assert removed is False
+    assert np.array_equal(out, img)
+
+
+def test_remove_skips_when_no_alpha_asset(tmp_path):
+    # Use an isolated dir with ONLY the profile (no alpha PNG). Must not point
+    # at the real ASSET_DIR — once Task 7 calibration is run, a real
+    # gemini_alpha_map.png lands there and this test would falsely fail.
+    import shutil
+    d = str(tmp_path)
+    shutil.copy(os.path.join(ASSET_DIR, "gemini_profile.json"),
+                os.path.join(d, "gemini_profile.json"))
+    r = GeminiWatermarkRemover(d)
+    assert r.has_alpha is False
+    img = np.full((600, 800, 3), 90, np.uint8)
+    out, removed = r.remove(img)
+    assert removed is False
+    assert np.array_equal(out, img)

@@ -113,3 +113,29 @@ class GeminiWatermarkRemover:
     @property
     def has_alpha(self) -> bool:
         return self.profile.get("alpha") is not None
+
+    def remove(self, img: np.ndarray):
+        """Return (image, removed: bool). Non-destructive when confidence is
+        low or no calibrated alpha map is present."""
+        alpha = self.profile.get("alpha")
+        if alpha is None:
+            return img, False
+
+        variants = self.profile["variants"]
+        pad = self.profile.get("search_pad", 12)
+        threshold = self.profile.get("confidence_threshold", 0.45)
+        logo = float(self.profile.get("logo_color", [255, 255, 255])[0])
+        clamp = float(self.profile.get("alpha_clamp", 0.95))
+
+        box, confidence = locate(img, variants, alpha, search_pad=pad)
+        if confidence < threshold:
+            return img, False
+
+        x, y, bw, bh = box
+        out = img.copy()
+        region = out[y:y + bh, x:x + bw].astype(np.float32)
+        a = cv2.resize(alpha, (bw, bh))
+        recovered = reverse_alpha(region, a, logo_color=logo, alpha_clamp=clamp)
+        recovered = residual_inpaint(recovered, a)
+        out[y:y + bh, x:x + bw] = recovered
+        return out, True
