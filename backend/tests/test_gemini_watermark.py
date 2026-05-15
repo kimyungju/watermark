@@ -124,9 +124,13 @@ def test_residual_inpaint_reduces_max_error_after_jpeg_roundtrip():
     wm = (a * 255 + (1 - a) * original).astype(np.uint8)
 
     # JPEG round-trip degrades the perfect-inverse assumption.
-    p = os.path.join(tempfile.gettempdir(), "gem_rt.jpg")
-    cv2.imwrite(p, wm, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    wm_rt = cv2.imread(p).astype(np.float32)
+    fd, p = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    try:
+        cv2.imwrite(p, wm, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        wm_rt = cv2.imread(p).astype(np.float32)
+    finally:
+        os.remove(p)
 
     recovered = reverse_alpha(wm_rt, alpha)
     cleaned = residual_inpaint(recovered, alpha, low=0.15, high=0.85)
@@ -134,4 +138,6 @@ def test_residual_inpaint_reduces_max_error_after_jpeg_roundtrip():
     err_before = np.abs(recovered.astype(int) - original.astype(int)).max()
     err_after = np.abs(cleaned.astype(int) - original.astype(int)).max()
     assert cleaned.shape == original.shape
-    assert err_after <= err_before
+    # strict <: passes only if inpaint actually runs (a broken no-op would
+    # give err_after == err_before). Empirical gap here is large (>100).
+    assert err_after < err_before
