@@ -143,8 +143,7 @@ def test_residual_inpaint_reduces_max_error_after_jpeg_roundtrip():
     assert err_after < err_before
 
 
-def _make_remover_with_alpha(tmp_path, size, alpha):
-    import json
+def _make_remover_with_alpha(tmp_path, alpha):
     import shutil
     d = str(tmp_path)
     shutil.copy(os.path.join(ASSET_DIR, "gemini_profile.json"),
@@ -156,7 +155,7 @@ def _make_remover_with_alpha(tmp_path, size, alpha):
 
 def test_remove_recovers_composited_watermark(tmp_path):
     alpha = _star_alpha(48)
-    r = _make_remover_with_alpha(tmp_path, 48, alpha)
+    r = _make_remover_with_alpha(tmp_path, alpha)
     img = np.full((600, 800, 3), 90, np.uint8)
     x0, y0 = 800 - 32 - 48, 600 - 32 - 48
     base = img[y0:y0 + 48, x0:x0 + 48].astype(np.float32)
@@ -173,11 +172,12 @@ def test_remove_recovers_composited_watermark(tmp_path):
 
 def test_remove_skips_clean_image(tmp_path):
     alpha = _star_alpha(48)
-    r = _make_remover_with_alpha(tmp_path, 48, alpha)
+    r = _make_remover_with_alpha(tmp_path, alpha)
     img = np.full((600, 800, 3), 90, np.uint8)
+    expected = img.copy()
     out, removed = r.remove(img)
     assert removed is False
-    assert np.array_equal(out, img)
+    assert np.array_equal(out, expected)
 
 
 def test_remove_skips_when_no_alpha_asset(tmp_path):
@@ -191,6 +191,7 @@ def test_remove_skips_when_no_alpha_asset(tmp_path):
     r = GeminiWatermarkRemover(d)
     assert r.has_alpha is False
     img = np.full((600, 800, 3), 90, np.uint8)
+    expected = img.copy()
     out, removed = r.remove(img)
     assert removed is False
-    assert np.array_equal(out, img)
+    assert np.array_equal(out, expected)
