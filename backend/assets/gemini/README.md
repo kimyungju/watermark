@@ -27,3 +27,17 @@ For a different sample: read its dimensions, sample a flat patch away from the
 logo for `--bg` (B G R), and measure the bottom-right logo box for `--box`
 (X Y W H). This writes `gemini_alpha_map.png` (gitignored); the Gemini path
 then activates automatically with no code change.
+
+## Before activating in production: false-positive sanity sweep
+
+The Gemini path only runs when `locate()` NCC confidence ≥ `confidence_threshold`
+(default 0.45 in `gemini_profile.json`). This default is validated against flat,
+noisy, and gradient backgrounds but NOT against natural non-Gemini photos with
+bright/structured content in the bottom-right corner (sun, lamp, white object,
+scanned-page corner).
+
+After generating `gemini_alpha_map.png`, before relying on the feature, run a
+handful of clean non-Gemini images (especially ones with bright bottom-right
+content) through the pipeline and confirm none are altered. If any clean image
+has its corner modified, raise `confidence_threshold` in `gemini_profile.json`
+until it stops, then re-verify a real Gemini sample is still cleaned.
