@@ -37,6 +37,8 @@ Request flow: **Upload → Dispatch → Process → Poll → Download**
 - `services/pdf_processor.py` — 5-strategy watermark detection using PyMuPDF: common text across pages, large light text, platform fingerprints (StuDocu/Scribd/CourseHero), repeated images, banner-shaped images
 - `services/pdf_watermark_remover.py` — pypdf object-level removal (no rasterization): separate content streams, annotation removal, inline BT/ET text block removal, XObject overlay removal, cover page stripping, output compression
 - `services/image_processor.py` — OpenCV watermark detection (blur diff + Canny edges) and Telea inpainting. Optional LaMa ONNX model (not included).
+- `services/gemini_watermark.py` — Gemini ("Nano Banana") visible-logo removal via Reverse Alpha Blending (`original = (watermarked − α·L)/(1−α)`). Loads a calibrated alpha map + geometry profile from `assets/gemini/`. Tried first in `ImageProcessor.process()`; falls through to the generic detector when confidence < threshold or no alpha map present. Visible logo ONLY — SynthID (invisible) is out of scope.
+- `services/calibrate_gemini.py` — offline one-time script deriving the real alpha map from a Gemini sample over a solid background.
 - `services/constants.py` — Shared regex patterns for watermark detection (PLATFORM_PATTERNS, CLASSIC_WATERMARK_PATTERNS, IGNORE_COMMON_TEXT)
 - `services/rate_limiter.py` — Sliding window per-IP rate limiting (upload: 10/min, poll: 60/min)
 
