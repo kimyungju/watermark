@@ -177,8 +177,12 @@ from services.gemini_watermark import reverse_alpha
 
 
 def _composite(original, alpha, logo=255.0):
+    # Stay float: reverse_alpha's contract is float32 input. Casting to uint8
+    # here would inject quantization error that the 1/(1-a) inversion
+    # amplifies ~10x at a=0.9, breaking the <=3 tolerance. uint8 robustness
+    # is Task 4's concern (residual_inpaint), not this unit's.
     a = alpha[..., None]
-    return (a * logo + (1.0 - a) * original).astype(np.uint8)
+    return (a * logo + (1.0 - a) * original)
 
 
 def test_reverse_alpha_recovers_original_within_tolerance():
@@ -326,10 +330,11 @@ Add to `backend/services/gemini_watermark.py`:
 ```python
 def _select_variant(img_shape, variants):
     max_dim = max(img_shape[0], img_shape[1])
-    for v in sorted(variants, key=lambda x: x["max_dim_lt"]):
+    sorted_v = sorted(variants, key=lambda x: x["max_dim_lt"])
+    for v in sorted_v:
         if max_dim < v["max_dim_lt"]:
             return v
-    return variants[-1]
+    return sorted_v[-1]  # largest bucket; must index the SORTED list
 
 
 def locate(img: np.ndarray, variants: list, alpha: np.ndarray, search_pad: int = 12):
@@ -346,11 +351,16 @@ def locate(img: np.ndarray, variants: list, alpha: np.ndarray, search_pad: int =
     sx1 = min(w, px + bw + search_pad)
     sy1 = min(h, py + bh + search_pad)
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    bright = cv2.subtract(gray, cv2.medianBlur(gray, 5))
-    search = bright[sy0:sy1, sx0:sx1].astype(np.float32)
+    # NCC the alpha template directly against the float grayscale crop.
+    # TM_CCOEFF_NORMED subtracts each window's mean and normalizes, so the
+    # template's absolute scale is irrelevant and a roughly-flat background
+    # cancels out — the logo's alpha pattern dominates the local variance.
+    # (A medianBlur high-pass fails here: a small kernel sits entirely inside
+    # a tens-of-px logo, giving ~0 interior response and ~0 correlation.)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    search = gray[sy0:sy1, sx0:sx1]
 
-    template = (cv2.resize(alpha, (bw, bh)) * 255.0).astype(np.float32)
+    template = cv2.resize(alpha, (bw, bh)).astype(np.float32)
     if search.shape[0] < bh or search.shape[1] < bw:
         return (px, py, bw, bh), 0.0
 
@@ -402,9 +412,13 @@ def test_residual_inpaint_reduces_max_error_after_jpeg_roundtrip():
     wm = (a * 255 + (1 - a) * original).astype(np.uint8)
 
     # JPEG round-trip degrades the perfect-inverse assumption.
-    p = os.path.join(tempfile.gettempdir(), "gem_rt.jpg")
-    cv2.imwrite(p, wm, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    wm_rt = cv2.imread(p).astype(np.float32)
+    fd, p = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    try:
+        cv2.imwrite(p, wm, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        wm_rt = cv2.imread(p).astype(np.float32)
+    finally:
+        os.remove(p)
 
     recovered = reverse_alpha(wm_rt, alpha)
     cleaned = residual_inpaint(recovered, alpha, low=0.15, high=0.85)
@@ -412,7 +426,9 @@ def test_residual_inpaint_reduces_max_error_after_jpeg_roundtrip():
     err_before = np.abs(recovered.astype(int) - original.astype(int)).max()
     err_after = np.abs(cleaned.astype(int) - original.astype(int)).max()
     assert cleaned.shape == original.shape
-    assert err_after <= err_before
+    # strict <: passes only if inpaint actually runs (a broken no-op would
+    # give err_after == err_before). Empirical gap here is large (>100).
+    assert err_after < err_before
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -465,8 +481,7 @@ git commit -m "feat: add residual inpaint cleanup for recompressed inputs"
 Append to `backend/tests/test_gemini_watermark.py`:
 
 ```python
-def _make_remover_with_alpha(tmp_path, size, alpha):
-    import json
+def _make_remover_with_alpha(tmp_path, alpha):
     import shutil
     d = str(tmp_path)
     shutil.copy(os.path.join(ASSET_DIR, "gemini_profile.json"),
@@ -478,7 +493,7 @@ def _make_remover_with_alpha(tmp_path, size, alpha):
 
 def test_remove_recovers_composited_watermark(tmp_path):
     alpha = _star_alpha(48)
-    r = _make_remover_with_alpha(tmp_path, 48, alpha)
+    r = _make_remover_with_alpha(tmp_path, alpha)
     img = np.full((600, 800, 3), 90, np.uint8)
     x0, y0 = 800 - 32 - 48, 600 - 32 - 48
     base = img[y0:y0 + 48, x0:x0 + 48].astype(np.float32)
@@ -495,11 +510,12 @@ def test_remove_recovers_composited_watermark(tmp_path):
 
 def test_remove_skips_clean_image(tmp_path):
     alpha = _star_alpha(48)
-    r = _make_remover_with_alpha(tmp_path, 48, alpha)
+    r = _make_remover_with_alpha(tmp_path, alpha)
     img = np.full((600, 800, 3), 90, np.uint8)
+    expected = img.copy()
     out, removed = r.remove(img)
     assert removed is False
-    assert np.array_equal(out, img)
+    assert np.array_equal(out, expected)  # vs a snapshot, not vs self
 
 
 def test_remove_skips_when_no_alpha_asset(tmp_path):
@@ -513,9 +529,10 @@ def test_remove_skips_when_no_alpha_asset(tmp_path):
     r = GeminiWatermarkRemover(d)
     assert r.has_alpha is False
     img = np.full((600, 800, 3), 90, np.uint8)
+    expected = img.copy()
     out, removed = r.remove(img)
     assert removed is False
-    assert np.array_equal(out, img)
+    assert np.array_equal(out, expected)  # vs a snapshot, not vs self
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -577,13 +594,11 @@ git commit -m "feat: add gemini watermark remove orchestration"
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `backend/tests/test_image_processor.py`:
+In `backend/tests/test_image_processor.py`, add `import shutil` and
+`from services.gemini_watermark import GeminiWatermarkRemover` to the existing
+import block AT THE TOP of the file (not mid-file). Then append the rest:
 
 ```python
-import shutil
-
-from services.gemini_watermark import GeminiWatermarkRemover
-
 GEM_ASSET = os.path.join(os.path.dirname(__file__), "..", "assets", "gemini")
 
 
@@ -600,9 +615,7 @@ def _calibrated_dir(tmp_path):
 
 def test_process_removes_gemini_watermark(processor, tmp_path, monkeypatch):
     d, alpha = _calibrated_dir(tmp_path)
-    monkeypatch.setattr(
-        "services.image_processor.GEMINI_ASSET_DIR", d, raising=False
-    )
+    monkeypatch.setattr("services.image_processor.GEMINI_ASSET_DIR", d)
     img = np.full((600, 800, 3), 90, np.uint8)
     x0, y0 = 800 - 32 - 48, 600 - 32 - 48
     base = img[y0:y0 + 48, x0:x0 + 48].astype(np.float32)
@@ -625,6 +638,35 @@ def test_process_non_gemini_still_uses_generic_path(processor, sample_image_path
     result = processor.process(sample_image_path, out_dir)
     assert os.path.exists(result["output_path"])
     assert result["watermark_detected"] is True
+
+
+def test_process_falls_back_to_generic_when_gemini_declines(
+    processor, sample_image_path, monkeypatch
+):
+    # Deterministic: force Gemini to decline -> generic path MUST run and
+    # still detect the SAMPLE watermark (proves fall-through, not accident).
+    monkeypatch.setattr(
+        GeminiWatermarkRemover, "remove", lambda self, img: (img, False)
+    )
+    out_dir = tempfile.mkdtemp()
+    result = processor.process(sample_image_path, out_dir)
+    assert os.path.exists(result["output_path"])
+    assert result["watermark_detected"] is True
+
+
+def test_process_falls_back_to_generic_when_gemini_raises(
+    processor, sample_image_path, monkeypatch
+):
+    # The except-Exception fail-open path: a Gemini-path crash must not
+    # break processing; the generic detector still produces a result.
+    def _boom(self, img):
+        raise RuntimeError("simulated gemini failure")
+
+    monkeypatch.setattr(GeminiWatermarkRemover, "remove", _boom)
+    out_dir = tempfile.mkdtemp()
+    result = processor.process(sample_image_path, out_dir)
+    assert os.path.exists(result["output_path"])
+    assert result["watermark_detected"] is True
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -637,7 +679,11 @@ Expected: FAIL — `AttributeError` on `services.image_processor.GEMINI_ASSET_DI
 In `backend/services/image_processor.py`, add near the top imports:
 
 ```python
+import logging
+
 from services.gemini_watermark import GeminiWatermarkRemover
+
+logger = logging.getLogger(__name__)
 
 GEMINI_ASSET_DIR = os.path.join(
     os.path.dirname(__file__), "..", "assets", "gemini"
@@ -664,7 +710,9 @@ Replace the body of `process` (currently `backend/services/image_processor.py:95
                 cv2.imwrite(output_path, gem_out)
                 return {"output_path": output_path, "watermark_detected": True}
         except Exception:
-            pass  # any failure → fall back to generic detector below
+            # Fail-open: any Gemini-path bug must not break the generic path.
+            # Logged at debug so a permanent silent fallback is observable.
+            logger.debug("Gemini path failed; falling back", exc_info=True)
 
         mask = self.detect_watermark(img)
         if mask is None:
@@ -752,12 +800,12 @@ Derive the Gemini logo's per-pixel alpha map from a real sample placed over a
 solid background. Solves alpha from  W = a*L + (1-a)*O  ->  a = (W-O)/(L-O),
 averaged over channels.
 
-Usage:
+Usage (run from the backend/ directory):
     python -m services.calibrate_gemini \
         --sample path/to/gemini_sample.png \
         --bg 60 60 60 \
         --box X Y W H \
-        --out backend/assets/gemini
+        --out assets/gemini
 """
 
 import argparse
