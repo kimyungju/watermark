@@ -3,6 +3,12 @@ import os
 import cv2
 import numpy as np
 
+from services.gemini_watermark import GeminiWatermarkRemover
+
+GEMINI_ASSET_DIR = os.path.join(
+    os.path.dirname(__file__), "..", "assets", "gemini"
+)
+
 # LaMa model loaded lazily
 _lama_session = None
 
@@ -101,9 +107,18 @@ class ImageProcessor:
         ext = os.path.splitext(input_path)[1].lower()
         output_path = os.path.join(output_dir, f"output{ext}")
 
+        # High-confidence Gemini logo path first (near-lossless reverse-alpha).
+        try:
+            gem = GeminiWatermarkRemover(GEMINI_ASSET_DIR)
+            gem_out, gem_removed = gem.remove(img)
+            if gem_removed:
+                cv2.imwrite(output_path, gem_out)
+                return {"output_path": output_path, "watermark_detected": True}
+        except Exception:
+            pass  # any failure → fall back to generic detector below
+
         mask = self.detect_watermark(img)
         if mask is None:
-            # No watermark detected — copy original
             cv2.imwrite(output_path, img)
             return {"output_path": output_path, "watermark_detected": False}
 
