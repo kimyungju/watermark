@@ -1,9 +1,12 @@
+import logging
 import os
 
 import cv2
 import numpy as np
 
 from services.gemini_watermark import GeminiWatermarkRemover
+
+logger = logging.getLogger(__name__)
 
 GEMINI_ASSET_DIR = os.path.join(
     os.path.dirname(__file__), "..", "assets", "gemini"
@@ -115,7 +118,9 @@ class ImageProcessor:
                 cv2.imwrite(output_path, gem_out)
                 return {"output_path": output_path, "watermark_detected": True}
         except Exception:
-            pass  # any failure → fall back to generic detector below
+            # Fail-open: any Gemini-path bug must not break the generic path.
+            # Logged at debug so a permanent silent fallback is observable.
+            logger.debug("Gemini path failed; falling back", exc_info=True)
 
         mask = self.detect_watermark(img)
         if mask is None:
