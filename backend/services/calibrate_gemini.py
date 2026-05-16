@@ -4,12 +4,12 @@ Derive the Gemini logo's per-pixel alpha map from a real sample placed over a
 solid background. Solves alpha from  W = a*L + (1-a)*O  ->  a = (W-O)/(L-O),
 averaged over channels.
 
-Usage:
+Usage (run from the backend/ directory):
     python -m services.calibrate_gemini \
         --sample path/to/gemini_sample.png \
         --bg 60 60 60 \
         --box X Y W H \
-        --out backend/assets/gemini
+        --out assets/gemini
 """
 
 import argparse
